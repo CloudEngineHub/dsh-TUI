@@ -44,7 +44,7 @@ import { AUTO_THEME_NAME, getAutoThemeBase } from '../theme.js'
 import { FRAME_PRESETS, PRESET_NAMES } from '../components/activityFrames.js'
 import { ThinkingToggle } from '../components/ThinkingToggle.js'
 import { HistorySearchDialog } from '../components/HistorySearchDialog.js'
-import { RewindPicker } from '../components/RewindPicker.js'
+import { SessionTreePanel, treeWindowRows } from '../components/SessionTreePanel.js'
 import { BtwPanel } from '../components/BtwPanel.js'
 import { setClipboard } from '../ink/termio/osc.js'
 import instances from '../ink/instances.js'
@@ -54,6 +54,17 @@ import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/tr
 import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
 import { readTrajectorySeen, writeTrajectorySeen } from '../trajectoryPrefs.js'
 import type { SessionEvent } from '../dsh-adapter/types.js'
+import {
+  filterTree,
+  flattenTree,
+  nearestVisibleIndex,
+  TREE_FILTERS,
+  type FlatNode,
+  type SessionTreeData,
+  type SessionTreeMeta,
+  type TreeEntry,
+  type TreeFilter,
+} from '../dsh-adapter/sessionTree.js'
 import { LoadingState } from '../components/design-system/LoadingState.js'
 import { Pane } from '../components/design-system/Pane.js'
 import { loadHistory, type HistoryEntry } from '../history.js'
@@ -76,6 +87,11 @@ const SELECTABLE_KINDS = new Set<ChatRow['kind']>([
 /** Shared empty list for mode-gated derived rows (stable reference, so
  *  downstream consumers never see a changing prop when the mode is off). */
 const NO_ROWS: readonly ChatRow[] = []
+
+/** Shared empty values for the closed session tree (see NO_ROWS). */
+const NO_NODES: readonly FlatNode[] = []
+const NO_ACTIVE_PATH: ReadonlySet<string> = new Set()
+const NO_SESSION_METAS: ReadonlyMap<string, SessionTreeMeta> = new Map()
 
 /** `max` → `Max` (effort levels arrive lower-case from the adapter). */
 function capitalize(text: string): string {
@@ -269,10 +285,23 @@ export function Chat({
   const [historyFocus, setHistoryFocus] = React.useState(0)
   const [historyEntries, setHistoryEntries] = React.useState<readonly HistoryEntry[]>([])
   const [historyFill, setHistoryFill] = React.useState<string | null>(null)
-  /** Double-Esc rewind picker (CC rewind): open state + focused row + confirm. */
-  const [rewindOpen, setRewindOpen] = React.useState(false)
-  const [rewindIndex, setRewindIndex] = React.useState(0)
-  const [rewindConfirm, setRewindConfirm] = React.useState<ChatRow | null>(null)
+  /** Double-Esc session tree (pi's Session Tree on the DSH family model):
+   *  open state + asynchronously loaded data + cursor/filter/search +
+   *  rewind confirm. */
+  const [treeOpen, setTreeOpen] = React.useState(false)
+  const [treeLoading, setTreeLoading] = React.useState(false)
+  const [treeData, setTreeData] = React.useState<SessionTreeData | null>(null)
+  const [treeCursor, setTreeCursor] = React.useState(0)
+  const [treeFilter, setTreeFilter] = React.useState<TreeFilter>('default')
+  const [treeQuery, setTreeQuery] = React.useState('')
+  const [treeConfirm, setTreeConfirm] = React.useState<TreeEntry | null>(null)
+  /** True while rewindToNode is in flight: the panel stays open as a busy
+   *  seat so the prompt stays inert — a message submitted mid-swap would
+   *  land in the session being disposed, and the arriving historyFill
+   *  would clobber anything typed in the window. */
+  const [treeRewinding, setTreeRewinding] = React.useState(false)
+  /** Bumps on open/close so a late buildSessionTree result is dropped. */
+  const treeGenerationRef = React.useRef(0)
   /** /btw side-question overlay (CC): pure UI state — the answer never
    *  enters the transcript or the session log. */
   const [btw, setBtw] = React.useState<{ question: string; answer: string; error?: string; done: boolean } | null>(null)
@@ -856,11 +885,10 @@ export function Chat({
         channel.notify(t('rename-done', { title }))
         return true
       }
-      case 'rewind':
-        // Same picker as PromptInput's double-Esc on an empty input (CC
-        // rewind); `openRewind` notifies when there is nothing to rewind.
+      case 'rewind': // Alias of /tree (CC's name for the double-Esc panel).
+      case 'tree':
         setHelpOpen(false)
-        openRewind()
+        openTree()
         return true
       case 'exit':
       case 'quit':
@@ -1115,37 +1143,86 @@ export function Chat({
     return q ? historyEntries.filter(e => e.text.toLowerCase().includes(q)) : historyEntries
   }, [historyEntries, historyQuery])
 
-  // Double-Esc rewind: the user's own messages, newest first (CC lists the
-  // selectable user turns; steering side-questions are excluded). Computed
-  // per render while the picker is open — `channel.rows` is a live in-place
-  // array (see selectableRows).
-  const rewindRows = rewindOpen
-    ? channel.rows
-      .filter(row => row.kind === 'user' && row.label === undefined)
-      .reverse()
-    : NO_ROWS
-  /** Open the rewind picker (from PromptInput's double-Esc on an empty input). */
-  const openRewind = () => {
-    // rewindOpen is still false this render, so rewindRows is empty — scan
-    // directly instead of reading the gated list.
-    const candidates = channel.rows
-      .filter(row => row.kind === 'user' && row.label === undefined)
-      .reverse()
-    if (candidates.length === 0) {
-      channel.notify(t('rewind-none'))
-      return
-    }
-    setRewindIndex(0)
-    setRewindConfirm(null)
-    setRewindOpen(true)
+  // Double-Esc session tree: flatten the loaded family tree, then apply the
+  // kind filter + search. Computed per render while the panel is open — the
+  // family is capped at build time (channel.buildSessionTree), so this is
+  // cheap; the treeData reference only changes when a load lands.
+  const treeFull: readonly FlatNode[] = treeOpen && treeData !== null
+    ? flattenTree(treeData.roots, treeData.activeLeafId)
+    : NO_NODES
+  const treeNodes: readonly FlatNode[] = treeOpen && treeData !== null
+    ? filterTree(treeFull, treeData.activeLeafId, treeFilter, treeQuery)
+    : NO_NODES
+  const treeCursorClamped = treeNodes.length === 0
+    ? 0
+    : Math.min(treeCursor, treeNodes.length - 1)
+  /** Open the session tree (double-Esc / /tree / /rewind). The family loads
+   *  asynchronously — the generation counter drops a late result when the
+   *  user closed (or reopened) the panel before the load finished. */
+  const openTree = () => {
+    const generation = ++treeGenerationRef.current
+    setTreeConfirm(null)
+    setTreeQuery('')
+    setTreeFilter('default')
+    setTreeCursor(0)
+    setTreeData(null)
+    setTreeLoading(true)
+    setTreeOpen(true)
+    channel.buildSessionTree().then(data => {
+      if (treeGenerationRef.current !== generation) return
+      setTreeLoading(false)
+      if (data === null) {
+        // buildSessionTree already notified the reason.
+        setTreeOpen(false)
+        return
+      }
+      setTreeData(data)
+      // Initial cursor on the live tip, walking the parent chain when the
+      // default filter hides it (pi's findNearestVisibleIndex).
+      const full = flattenTree(data.roots, data.activeLeafId)
+      const visible = filterTree(full, data.activeLeafId, 'default', '')
+      setTreeCursor(nearestVisibleIndex(visible, full, data.activeLeafId))
+    }).catch(() => {
+      if (treeGenerationRef.current !== generation) return
+      setTreeLoading(false)
+      setTreeOpen(false)
+      channel.notify(t('tree-load-failed'), { color: 'error' })
+    })
   }
-  /** Execute the confirmed rewind; the message comes back into the input. */
-  const performRewind = async (row: ChatRow) => {
-    const text = await channel.rewindTo(row)
-    if (text !== null) {
-      // CC puts the restored message back in the prompt for re-editing.
-      setHistoryFill(text)
-      channel.notify(t('rewind-done'))
+  /** Close the tree and invalidate any in-flight load. */
+  const closeTree = () => {
+    treeGenerationRef.current++
+    setTreeOpen(false)
+    setTreeLoading(false)
+    setTreeData(null)
+    setTreeConfirm(null)
+  }
+  /** Execute the confirmed rewind; the turn's prompt comes back into the
+   *  input for re-editing. rewindToNode notifies and returns null on
+   *  failure, so a non-null result always succeeded. The panel closes only
+   *  when the swap settles (see treeRewinding). */
+  const performTreeRewind = async (entry: TreeEntry) => {
+    try {
+      const text = await channel.rewindToNode(entry.sessionId, entry.seq)
+      if (text === null) return
+      if (text !== '') {
+        setHistoryFill(text)
+        channel.notify(t('tree-rewound'))
+      } else {
+        channel.notify(t('tree-rewound-no-text'))
+      }
+    } catch (error) {
+      // Known failures come back as null (channel notifies); anything that
+      // still throws is unexpected — report it instead of letting the voided
+      // promise die as an unhandled rejection.
+      channel.notify(
+        t('tree-rewind-failed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    } finally {
+      setTreeRewinding(false)
+      closeTree()
     }
   }
 
@@ -1687,28 +1764,69 @@ export function Chat({
       }
       return
     }
-    if (rewindOpen) {
-      if (rewindConfirm !== null) {
-        // Confirmation state: Enter rewinds, Esc backs out to the list.
+    if (treeOpen) {
+      // Session tree (pi parity): ↑/↓ move (wrapping); PgUp/PgDn and ←/→
+      // page; printable chars extend the search query; Backspace edits it;
+      // ctrl+o cycles the kind filter (pi's binding — a bare `f` would
+      // collide with typing "f" into the search); Enter asks to confirm the
+      // rewind; Esc clears a non-empty query first, then closes. While the
+      // family is still loading only Esc is live.
+      // While the family is still loading only Esc is live; while a rewind
+      // is in flight the seat swallows every key (the agent swap must not
+      // race fresh input — closing now would re-arm the prompt mid-swap).
+      if (treeLoading || treeRewinding) {
+        if (key.escape && !treeRewinding) closeTree()
+        return
+      }
+      if (treeConfirm !== null) {
+        // Confirmation state: Enter rewinds, Esc backs out to the tree.
+        // plainReturn only — Option+Enter / Ctrl+Enter must not confirm.
         if (plainReturn) {
-          const row = rewindConfirm
-          setRewindOpen(false)
-          setRewindConfirm(null)
-          void performRewind(row)
+          const entry = treeConfirm
+          setTreeConfirm(null)
+          setTreeRewinding(true)
+          void performTreeRewind(entry)
         } else if (key.escape) {
-          setRewindConfirm(null)
+          setTreeConfirm(null)
         }
-      } else if (key.upArrow) {
-        setRewindIndex(index => (index <= 0 ? rewindRows.length - 1 : index - 1))
+        return
+      }
+      const last = treeNodes.length - 1
+      // !key.tab keeps Tab/Shift+Tab out of the search box (their '\t' input
+      // would pollute the query; the parser reports backtab as tab+shift).
+      const letter = input !== '' && !key.ctrl && !key.meta && !key.super && !key.tab
+      if (key.upArrow) {
+        setTreeCursor(treeCursorClamped <= 0 ? Math.max(0, last) : treeCursorClamped - 1)
       } else if (key.downArrow) {
-        setRewindIndex(index => (index >= rewindRows.length - 1 ? 0 : index + 1))
-      } else if (plainReturn) {
-        const row = rewindRows[rewindIndex]
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: out-of-range index on an empty list
-        if (row) setRewindConfirm(row)
+        setTreeCursor(treeCursorClamped >= last ? 0 : treeCursorClamped + 1)
+      } else if (key.pageUp || key.leftArrow) {
+        setTreeCursor(Math.max(0, treeCursorClamped - treeWindowRows(terminalRows, treeQuery !== '')))
+      } else if (key.pageDown || key.rightArrow) {
+        setTreeCursor(Math.min(last, treeCursorClamped + treeWindowRows(terminalRows, treeQuery !== '')))
       } else if (key.escape) {
-        setRewindOpen(false)
-        setRewindConfirm(null)
+        if (treeQuery !== '') setTreeQuery('')
+        else closeTree()
+      } else if (key.backspace || key.delete) {
+        setTreeQuery(query => query.slice(0, -1))
+      } else if (key.ctrl && input === 'o') {
+        const index = TREE_FILTERS.indexOf(treeFilter)
+        setTreeFilter(TREE_FILTERS[(index + 1) % TREE_FILTERS.length] ?? 'default')
+      } else if (plainReturn) {
+        const flatNode = treeNodes[treeCursorClamped]
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: out-of-range index on an empty list
+        if (flatNode && flatNode.node.entry !== null) {
+          // A user message of the log's own first turn can never rewind
+          // (dropping turn 0 needs boundary -1) — refuse here with the
+          // reason, instead of failing after the confirm seat. Turn-0
+          // assistant/tool entries rewind fine (they keep turn 0 whole).
+          if (flatNode.node.entry.firstTurn === true && flatNode.node.entry.kind === 'user') {
+            channel.notify(t('tree-first-message'), { color: 'error' })
+          } else {
+            setTreeConfirm(flatNode.node.entry)
+          }
+        }
+      } else if (letter) {
+        setTreeQuery(query => query + input)
       }
       return
     }
@@ -1877,7 +1995,7 @@ export function Chat({
   /** Prompt input is inert while a modal dialog owns the keyboard. */
   const promptSelectionActive =
     selectionActive || modelPickerOpen || skillsPickerOpen || workspacePickerOpen || workspaceFlow !== null || activityPickerOpen ||
-    effortSliderOpen || presetPickerOpen || themePickerOpen || thinkingOpen || historyOpen || rewindOpen || searchOpen ||
+    effortSliderOpen || presetPickerOpen || themePickerOpen || thinkingOpen || historyOpen || treeOpen || searchOpen ||
     btw !== null
 
   // The trajectory scene replaces the conversation for as long as it is open.
@@ -1903,7 +2021,7 @@ export function Chat({
     modelPickerOpen || skillsPickerOpen ||
     activityPickerOpen || (effortSliderOpen && effortOptions.length > 1) ||
     (presetPickerOpen && presetOptions.length > 0) || themePickerOpen || historyOpen ||
-    rewindOpen || searchOpen
+    treeOpen || searchOpen
 
   return (
     <Box ref={wakeTickRef} flexDirection="column" flexGrow={1} width="100%">
@@ -2043,7 +2161,7 @@ export function Chat({
             selectionActive={promptSelectionActive}
             fillText={historyFill}
             onFillConsumed={() =>{  setHistoryFill(null) }}
-            onRewindRequest={openRewind}
+            onRewindRequest={openTree}
             controllerRef={promptControllerRef}
           />
         )}
@@ -2161,12 +2279,21 @@ export function Chat({
               />
             </Box>
           )}
-          {rewindOpen && (
+          {treeOpen && (
             <Box flexDirection="column" marginTop={1}>
-              <RewindPicker
-                rows={rewindRows}
-                focusIndex={rewindIndex}
-                confirmRow={rewindConfirm}
+              <SessionTreePanel
+                nodes={treeNodes}
+                cursor={treeCursorClamped}
+                filter={treeFilter}
+                query={treeQuery}
+                activePath={treeData?.activePath ?? NO_ACTIVE_PATH}
+                truncated={treeData?.truncated ?? false}
+                loading={treeLoading}
+                rewinding={treeRewinding}
+                confirm={treeConfirm}
+                sessions={treeData?.sessions ?? NO_SESSION_METAS}
+                sessionCount={treeData?.sessionCount ?? 0}
+                currentSessionId={channel.agentId}
               />
             </Box>
           )}

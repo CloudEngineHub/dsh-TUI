@@ -15,7 +15,7 @@
 | `Up/Down` | 菜单选择；普通输入中浏览历史或在多行文本间移动 |
 | `Ctrl+V` | 从系统剪贴板插入文本或文件；图片作为持久附件发送 |
 | `Ctrl+X` | 用外部编辑器（`$VISUAL` → `$EDITOR` → vi）编辑当前输入，保存退出后回填；`:cq` 或非零退出保留原稿 |
-| `Esc` | 按当前模式关闭菜单/选区/弹窗；有输入时清空；模型工作时中断；空输入连续两次打开 rewind |
+| `Esc` | 按当前模式关闭菜单/选区/弹窗；有输入时清空；模型工作时中断；空输入连续两次打开会话树 |
 | `Ctrl+C` | 工作时中断；空闲且有输入时清空；空输入时连续两次退出 |
 | `Ctrl+D` | 空闲时连续两次退出 |
 | `Ctrl+O` | 切换 transcript/verbose 详情，展开思考与完整工具参数/输出 |
@@ -108,14 +108,22 @@ Bracketed paste（右键或终端原生粘贴）会原样插入，包括换行�
 Windows `dsh-tui.cmd --resume` 使用 `~/.dsh-tui/resume.txt` 中最后选择的会话 ID
 （该文件同时双写到旧路径 `~/.dsh-cc/resume.txt`，供只读旧路径的旧版启动器过渡）。
 
-### Rewind
+### 会话树（回退）
 
-输入框为空时连续按两次 `Esc` 打开用户消息列表。选择并确认后：
+输入框为空时连续按两次 `Esc`（或 `/tree`，`/rewind` 为其别名）打开会话树：当前目录下的会话家族按分叉结构缝合展示 —— 每次回退都会产生一个带 `parentSession` 的新会话，树把祖先与兄弟分支拼回一张图，`•` 标记通往当前会话的活动路径。
 
-1. 找到该消息所属 turn 的开始事件。
-2. 通过 DSH session fork 创建分支会话。
+按键：`↑/↓` 移动（循环）；`PgUp/PgDn` 或 `←/→` 翻页；直接输入字符搜索（多词 AND）；`Backspace` 删除；`Ctrl+O` 循环过滤器（默认 → 无工具 → 仅用户 → 全部）；`Enter` 选中并二次确认；`Esc` 先清空搜索词，再按关闭。
+
+回退语义对齐 pi 的 navigateTree：**选中用户消息** = 丢弃该条目所属 turn（回退到 turn 起点），并把该 turn 的用户消息回填到输入框供修改重发；**选中 assistant/工具/通知等条目** = 保留到该条目所属 step 结束（回退到该 step 的 `step/end`），选中的 AI 回答或工具调用仍在历史里，其后同 turn 的后续 step 被丢弃。DSH 的 agentic turn 一次提示词可能跑出多个 step、上千事件，若按整 turn 保留，选中 turn 中部的工具调用几乎不改变可见历史；step 是可以安全切分、且不会出现悬空工具调用的最小单位。切口落在 turn 中部时，fork seed 会补上一条合成 `turn/end`（`aborted/user`，与用户按 Esc 打断时写入的事件形状一致）来闭合该 turn。确认后：
+
+1. 计算边界：用户消息取所属 turn 起点之前；其他条目取所属 step 的 `step/end`（条目与 turn 结束之间没有 step 标记时取所属 turn 的 `turn/end`）。
+2. 以该边界为 seed 创建分支会话（header 记录 `parentSession` + `seedLength`；中部切口先补合成 `turn/end`）。
 3. 回放该边界前的历史。
-4. 把原消息放回输入框供修改和重发。
+4. 仅当所属 turn 被丢弃时，把原消息放回输入框供修改和重发。
+
+首轮的用户消息不可回退（没有更早的内容可保留）；选中当前会话最后一轮内的条目时没有内容会被丢弃，面板会提示"已是最新状态"而不产生空转分叉。
+
+选中其他会话（死分支）上的条目同样有效 —— 会从该会话的对应点分叉。
 
 ### 侧问 /btw
 
@@ -218,7 +226,7 @@ transcript。
 
 | 分组 | 命令 |
 | --- | --- |
-| 会话 | `/new`、`/resume`、`/rename`、`/workspace resume|rename|open`、`/clear`、`/compact`、`/export`、`/btw`、`/trace`（轨迹场景，亦可 `Ctrl+T`） |
+| 会话 | `/new`、`/resume`、`/rename`、`/workspace resume|rename|open`、`/clear`、`/compact`、`/export`、`/btw`、`/trace`（轨迹场景，亦可 `Ctrl+T`）、`/tree`（会话树，`/rewind` 别名，亦可双击 Esc） |
 | 状态 | `/status`、`/cost`、`/config`、`/doctor`、`/init`、`/agents` |
 | 模型与显示 | `/model`、`/effort`、`/thinking`、`/tokens`、`/activity`、`/preset`、`/theme`、`/lang` |
 | 账号与策略 | `/provider`、`/login`、`/logout`、`/permissions`、`/add-dir`、`/hooks`、`/mcp` |
