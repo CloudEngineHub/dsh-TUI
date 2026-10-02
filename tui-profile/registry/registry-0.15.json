@@ -1,7 +1,7 @@
 {
   "profileVersion": "tui-admission/0.15",
   "std": {
-    "repository": "https://github.com/Yan-Zero/dsh-std",
+    "repository": "https://github.com/T-Auto/dsh-std",
     "submodule": "vendor/dsh-std",
     "manifestVersion": "0.15"
   },
