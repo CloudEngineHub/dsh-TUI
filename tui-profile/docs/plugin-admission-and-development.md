@@ -5,7 +5,7 @@
 > 本文档是 **dsh-TUI 的 TUI Profile**（仓内 [`tui-profile/`](../README.md)）的
 > **唯一整合入口**：它随 dsh-TUI 的代码现状随时修订，作为 dsh-TUI 子插件（插件作者、
 > 插件市场、评审）的参考标注——不是社区 RFC，也不需要在别处批准后才生效。
-> 公共/社区协议语义以上游 [dsh-std](https://github.com/Yan-Zero/dsh-std) 为准，
+> 公共/社区协议语义以上游 [dsh-std](https://github.com/T-Auto/dsh-std) 为准，
 > 本文只写 dsh-TUI 自己的准入要求与私有协议定义；原先独立的 `spec/` 与
 > `docs/plugins.md` 已并入本文档。文中指向 dsh-TUI 仓库内部文件/文档的链接以
 > dsh-TUI 仓库为准。
@@ -76,7 +76,7 @@ TypeScript 相对导入必须带 `.js` 后缀（ESM）；构建用 `tsc` 输出�
 ## 上游公共基线（dsh-std · Community Consensus v0.15）
 
 **Status:** 当前基线依赖（随 dsh-TUI 代码修订，无独立晋级流程）
-**Normative source:** [dsh-std](https://github.com/Yan-Zero/dsh-std)
+**Normative source:** [dsh-std](https://github.com/T-Auto/dsh-std)
 **Pinned source:** [`vendor/dsh-std`](../../vendor/dsh-std)
 
 本 profile 不复制 Community v0.15 的 Manifest、元协议、composition 与 lifecycle 规范。
@@ -108,7 +108,7 @@ lifecycle 机制参与协商和激活。私有命名空间不产生第二套协�
 
 ### 对 dsh-TUI 与实现的要求
 
-dsh-TUI 对齐上游公共元协议 [dsh-std](https://github.com/Yan-Zero/dsh-std)，并在其上
+dsh-TUI 对齐上游公共元协议 [dsh-std](https://github.com/T-Auto/dsh-std)，并在其上
 声明本 profile 的 TUI Admission v0.15 增量。要点：
 
 - 契约以**坐标**标识（`apiVersion + kind`，如 `commands.dsh/v1alpha1` +

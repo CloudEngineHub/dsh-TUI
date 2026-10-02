@@ -3,7 +3,7 @@
 > **dsh-TUI 的插件准入与私有协议定义**（仓内 `tui-profile/`）
 
 这是 [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) 自己的 **Profile**：在
-[dsh-std](https://github.com/Yan-Zero/dsh-std) 公共协议之上，说明「什么样的插件能被
+[dsh-std](https://github.com/T-Auto/dsh-std) 公共协议之上，说明「什么样的插件能被
 dsh-TUI 装载、进市场」，以及 dsh-TUI 私有的协议坐标（`tui.dsh/*`）。
 
 ## 口径（先读这三条）
@@ -11,7 +11,7 @@ dsh-TUI 装载、进市场」，以及 dsh-TUI 私有的协议坐标（`tui.dsh/
 1. **归属**：它属于 dsh-TUI 仓库，由 dsh-TUI 维护者维护，**随本仓库代码一起修订**。
 2. **不是社区 RFC**：这里没有「提交提案 → 征求意见 → 批准」的流程，也没有
    Draft / Experimental / Candidate / Stable 的晋级档位。实现变了就把这里改到与实现
-   一致。公共/社区协议语义属于上游 [dsh-std](https://github.com/Yan-Zero/dsh-std)；
+   一致。公共/社区协议语义属于上游 [dsh-std](https://github.com/T-Auto/dsh-std)；
    生态入口与索引在 [`T-Auto/dsh-ecosystem-spec`](https://github.com/T-Auto/dsh-ecosystem-spec)。
 3. **用途**：它是 **dsh-TUI 子插件的参考标注**——插件作者、插件市场与评审读它来了解
    当前 dsh-TUI 期望什么、有哪些私有坐标与权限、怎么自检。
@@ -63,7 +63,7 @@ dsh-TUI 子插件与插件市场
 ```
 
 - 公共语义**不在这里定义**，也不在这里「顺手」扩展：要改公共语义，去
-  [dsh-std](https://github.com/Yan-Zero/dsh-std)；
+  [dsh-std](https://github.com/T-Auto/dsh-std)；
 - 本目录**不倒灌**：TUI 的要求只约束 dsh-TUI 生态，不要求其他宿主采用；
 - 本目录不代表 dsh 官方接受、认证或背书；参考实现与 dsh-TUI 本身只能提供 evidence，
   不能自我认证。

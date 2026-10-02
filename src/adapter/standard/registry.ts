@@ -25,7 +25,7 @@ export interface SpecData {
 
 const REGISTRY_FILE = join('registry', 'registry-0.15.json')
 const EXPECTED_PROFILE_VERSION = 'tui-admission/0.15'
-const EXPECTED_STD_REPOSITORY = 'https://github.com/Yan-Zero/dsh-std'
+const EXPECTED_STD_REPOSITORY = 'https://github.com/T-Auto/dsh-std'
 const EXPECTED_STD_SUBMODULE = 'vendor/dsh-std'
 const EXPECTED_STD_MANIFEST_VERSION = '0.15'
 const EXPECTED_PERMISSION_REGISTRY_VERSION = '0.1'
