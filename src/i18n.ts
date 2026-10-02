@@ -1206,6 +1206,10 @@ const dict = {
   'theme-user-base': { zh: '{{base}} 基底 · ~/.dsh-tui/themes/{{name}}.json', en: '{{base}} base · ~/.dsh-tui/themes/{{name}}.json' },
   'theme-plugin-base': { zh: '插件 · {{base}} 基底 · {{name}}', en: 'Plugin · {{base}} base · {{name}}' },
 
+  // ── components/ThemePreviewPane.tsx ─────────────────────────────────
+  'theme-preview-title': { zh: '主题预览', en: 'Theme preview' },
+  'theme-preview-follow': { zh: '跟焦点实时预览', en: 'Live, follows focus' },
+
   // ── components/LoadedContextPanel.tsx ───────────────────────────────
   'context-unavailable': { zh: '当前会话没有已加载的上下文', en: 'No loaded context is available for this session' },
   'context-panel-sections': { zh: '系统提示词 · {{n}} 段', en: 'System prompt · {{n}} sections' },
