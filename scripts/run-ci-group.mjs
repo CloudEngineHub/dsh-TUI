@@ -1109,6 +1109,12 @@ const GROUPS = {
 // 分代（含上一 epoch 迟到 end 不得错杀）、resume 日志 bootstrap（历史行
 // 不进转录）、会话绑定延迟愈合与 peer 会话不污染。
     ["verify-subagent-panel-sync", ['node', '--import', 'tsx/esm', 'scripts/verify-subagent-panel-sync.tsx']],
+// 子代理卡片描述绑定回归：无身份的队列 term 不得覆盖 childId-keyed 的 label
+// （含 one-shot 的 catalog 先行形态与 resume 折叠行、continuable 二次 epoch），
+// keyed 事实（label/mode）必须落到自己的行、迟到也不丢；并发派发时首帧宁可
+// 留占位也不借同伴的标题；描述作废/溢出后仍保留未匹配的派发，远程任务迟到
+// 不得取走后来入队的标题；另钉住两种宿主顺序、队列上界与 reset 卫生。
+    ["verify-subagent-description-binding", ['node', '--import', 'tsx/esm', 'scripts/verify-subagent-description-binding.ts']],
 // 只读 Agent View、子代理消息输入框与代理间消息流：三个入口与 Esc 分层、父会话行与草稿
 // 往返不变、无 history 时回退 tail 并注明范围、queue/steer 与失败保草稿、降级路径、
 // 28/40 列不溢出、Detail Messages 页与 Dashboard 摘要行。
