@@ -6,7 +6,6 @@ import { constants as fsConstants } from 'node:fs'
 import { open, unlink } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { t } from '../i18n.js'
-import { kernelDisplayName } from './kernelCatalog.js'
 import { Box, Text, useInput, useTerminalSize, useTheme, type ScrollBoxHandle } from '../ui.js'
 import { EffortChargeGlyph } from './EffortChargeGlyph.js'
 import { EffortInputBorder, type InputBorderLabel } from './EffortInputBorder.js'
@@ -611,6 +610,17 @@ export interface PromptInputProps {
    */
   onOpenSessions?(): void
   /**
+   * 当前内核的**短品牌名**（选择器目录里那一行的 `manifest.shortLabel`，宿主经
+   * Chat 透传）：只用在「这条命令当前后端不支持」的提示里，与内核选择器、落地页
+   * 铭牌同一份来源（P0 D2——界面里不再有 id→名字表）。
+   *
+   * 不复用 `channel.backendCapabilities.backendLabel`：那是**会话后端自己的全名**
+   * （后端 `descriptor.label`，如 "Claude Agent"），而这里是宿主词表给内核起的短名
+   * （"Claude"）；两者在真机上恰好都可用，但短名才是选择器那一屏的用词。缺席 =
+   * 退回原样 backendId（不猜品牌名）。
+   */
+  backendLabel?: string
+  /**
    * Background sessions waiting on the user (agent view "needs input" rows
    * excluding this session); the prompt footer shows the
    * "← N agents" hint when provided (hidden when undefined).
@@ -687,6 +697,7 @@ export function PromptInput({
   onRewindRequest,
   onBackgroundRequest,
   onOpenSessions,
+  backendLabel,
   backgroundAgentsNeedingInput,
   controllerRef,
   onCaretImage,
@@ -1986,7 +1997,7 @@ export function PromptInput({
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- partial embedder channels omit the snapshot
     const capabilities = channel.backendCapabilities as Channel['backendCapabilities'] | undefined
     if (command === undefined && isUnavailableLocalCommand(parsed.name, capabilities)) {
-      channel.notify(t('cmd-unavailable-backend', { cmd: parsed.name, backend: capabilities === undefined ? '' : kernelDisplayName(capabilities.backendId) }), {
+      channel.notify(t('cmd-unavailable-backend', { cmd: parsed.name, backend: capabilities === undefined ? '' : backendLabel ?? capabilities.backendId }), {
         color: 'warning',
         timeoutMs: 4000,
       })

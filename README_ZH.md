@@ -149,6 +149,10 @@ CLI 形态：任意终端运行 `dsh-tui migrate ...`，与 TUI 内执行同一�
 
 **VS Code**：用集成终端，或用 `dsh-tui-vscode` 扩展。见 [VS Code 使用指南](docs/vscode.md)。**Herdr**：在 [Herdr](https://herdr.dev) 窗格运行 `dsh-tui`，经其本地集成 API 报告 `idle` / `working` / `blocked`。
 
+裸 `--resume`（`-c`、`--continue`）恢复最终选定后端的上次会话。
+未知的后端 id 回落 DSH 时，读取 DSH 的恢复记录。
+显式 `--resume <id>` 则把该 id 交给选定后端。
+
 ### 实验性：Claude 后端
 
 dsh-TUI 也可以把会话跑在 Claude 上：界面不变，背后由 Claude Agent SDK 驱动

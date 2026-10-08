@@ -8,7 +8,7 @@ import { gte, gt, lt, valid } from 'semver'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
 import { stripResumeArgs } from './sessionHistory.js'
-import { KERNEL_SWITCH_HANDOFF_ENV, isKernelId, kernelDisplayName, type KernelBackendId } from './kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
 import { classifyReplacementOutcome, formatHandoffNotice, handoffEventTag, writeHandoffStage } from './handoffEvents.js'
 import { HANDOFF_ACK_FD_ENV, HANDOFF_ATTEMPT_ENV, HANDOFF_SCREEN_ENV, parseHandoffAckLine } from './handoffAck.js'
 import { DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from './ink/termio/csi.js'
@@ -152,11 +152,16 @@ export function readLastRunRecord(file: string = LAST_RUN_FILE): LastRunRecord |
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     const record = parsed as Record<string, unknown>
-    if (!isKernelId(record.backendId)) return undefined
+    // The syntax gate only: this module is also loaded by the launcher's retry
+    // path, which must not pull the registry (and cannot, without compiled
+    // modules). A record naming an uninstalled plugin reads back fine — the boot
+    // then falls back to dsh with a warning, like any unknown value (P0 D1).
+    const backendId = parseBackendId(record.backendId)
+    if (backendId === undefined) return undefined
     if (typeof record.sessionId !== 'string' || typeof record.cwd !== 'string' || typeof record.attemptId !== 'string') return undefined
     if (typeof record.updatedAt !== 'number' || !Number.isFinite(record.updatedAt)) return undefined
     return {
-      backendId: record.backendId,
+      backendId,
       sessionId: record.sessionId,
       cwd: record.cwd,
       attemptId: record.attemptId,
@@ -2037,6 +2042,13 @@ export interface TuiRestartOptions {
    */
   backend?: KernelBackendId
   /**
+   * The chosen kernel's display name (its manifest's short label), resolved by
+   * the caller from the registry entry: THIS module prints it and has no registry
+   * of its own (`bin/dsh-tui.js` shares that constraint). Absent → the raw id,
+   * which is what an unregistered/uninstalled backend would show anyway.
+   */
+  backendName?: string
+  /**
    * 'alt' (fullscreen kernel switch only): this process keeps the alternate
    * screen open through the spawn, the replacement adopts it without a
    * second 1049h, and its first flushed frame (ACKed on fd 3) hands the
@@ -2085,6 +2097,11 @@ export function restartChildEnv(
   delete childEnv[HANDOFF_SCREEN_ENV]
   delete childEnv[HANDOFF_ACK_FD_ENV]
   delete childEnv[HANDOFF_ATTEMPT_ENV]
+  // A derived resume target's provenance is never inherited: whatever survives
+  // here was built by THIS process, and on a kernel switch even the target itself
+  // goes (below). Keeping a stale mark would make the replacement revoke a target
+  // nobody derived (see resolveResumeTarget in kernelPrefs.ts).
+  delete childEnv[RESUME_BACKEND_ENV]
   if (options.backend === undefined && options.kernel !== undefined) childEnv[KERNEL_SWITCH_HANDOFF_ENV] = options.kernel
   if (options.backend !== undefined) {
     childEnv.DSH_TUI_BACKEND = options.backend
@@ -2136,7 +2153,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
   if (options.backend !== undefined) {
     await writeHandoffStage(
       process.stdout,
-      formatHandoffNotice('stage-start', { name: kernelDisplayName(options.backend), color: process.stdout.isTTY === true }) + '\n',
+      formatHandoffNotice('stage-start', { name: options.backendName ?? options.backend, color: process.stdout.isTTY === true }) + '\n',
     )
     logRestartEvent(handoffEventTag('stage-start'), { backend: options.backend, ...(attemptId === undefined ? {} : { attemptId }) })
   }
@@ -2263,7 +2280,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
         logRestartEvent(handoffEventTag('failed'), { reason: 'spawn-error', message: error.message })
         writeHandoffNotice(
           formatHandoffNotice('failed', {
-            name: kernelDisplayName(options.backend),
+            name: options.backendName ?? options.backend,
             reason: 'spawn-error',
             safeHint: true,
             color: process.stderr.isTTY === true,
@@ -2305,7 +2322,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
           const suffix = childStderr.trim() === '' ? '' : `\n${childStderr.trimEnd()}`
           writeHandoffNotice(
             formatHandoffNotice('failed', {
-              name: kernelDisplayName(options.backend),
+              name: options.backendName ?? options.backend,
               reason: outcome.reason,
               safeHint: true,
               color: process.stderr.isTTY === true,
@@ -2317,7 +2334,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
           if (handoff && signal !== null) restoreHandoffScreen()
           writeHandoffNotice(
             '\n' + formatHandoffNotice('crashed', {
-              name: kernelDisplayName(options.backend),
+              name: options.backendName ?? options.backend,
               code: outcome.code,
               safeHint: true,
               color: process.stderr.isTTY === true,

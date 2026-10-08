@@ -58,17 +58,20 @@ const {
   getStandaloneBinaryPath,
   getStandaloneAssetName,
 } = await import('../lib/types/update.js')
-const { KERNEL_IDS } = await import('../lib/types/kernelPrefs.js')
+const { BUILTIN_BACKEND_IDS } = await import('../lib/types/kernelPrefs.js')
 const launcherPath = fileURLToPath(new URL('../bin/dsh-tui.js', import.meta.url))
 const launcherAst = ts.createSourceFile(launcherPath, readFileSync(launcherPath, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 const launcherKernelIds = launcherAst.statements.flatMap(statement =>
   ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
-).find(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === 'KERNEL_IDS')?.initializer
+).find(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === 'BUILTIN_BACKEND_IDS')?.initializer
 check(
-  'launcher kernel ids stay aligned with the compiled registry',
+  // The launcher keeps a copy of the built-in ids for its messages only (P0 D1:
+  // validation is the id-syntax gate now); the copy must still match the
+  // compiled list, or a rescue prompt would name a backend that no longer exists.
+  'launcher built-in kernel ids stay aligned with the compiled list',
   launcherKernelIds !== undefined && ts.isArrayLiteralExpression(launcherKernelIds)
     && launcherKernelIds.elements.every(ts.isStringLiteral)
-    && JSON.stringify(launcherKernelIds.elements.map(element => element.text)) === JSON.stringify(KERNEL_IDS),
+    && JSON.stringify(launcherKernelIds.elements.map(element => element.text)) === JSON.stringify(BUILTIN_BACKEND_IDS),
 )
 const compiledModulePath = fileURLToPath(new URL('../lib/types/update.js', import.meta.url))
 const compiledShellQuotePath = fileURLToPath(new URL('../lib/types/utils/shellQuote.js', import.meta.url))
@@ -81,6 +84,9 @@ const compiledSessionHistoryPath = fileURLToPath(new URL('../lib/types/sessionHi
 // handoff is one-shot) — the scratch mirror has to carry it or the copy
 // fails to link.
 const compiledKernelPrefsPath = fileURLToPath(new URL('../lib/types/kernelPrefs.js', import.meta.url))
+// kernelPrefs.js imports the backend id rule (isBackendIdSyntax) from the neutral
+// manifest contract (P0 D1/D2) — the mirror has to carry it or the copy fails to link.
+const compiledBackendManifestPath = fileURLToPath(new URL('../lib/types/agent/backend-manifest.js', import.meta.url))
 // update.js imports the kernel-switch transition events (S05 MVE) from
 // handoffEvents.js, which in turn pulls kernelCatalog.js (display names)
 // and i18n.js (bilingual copy). The scratch mirrors must carry all of
@@ -103,11 +109,13 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 function copyUpdateModule(dstDir) {
   mkdirSync(join(dstDir, 'utils'), { recursive: true })
   mkdirSync(join(dstDir, 'components'), { recursive: true })
+  mkdirSync(join(dstDir, 'agent'), { recursive: true })
   cpSync(compiledModulePath, join(dstDir, 'update.js'))
   cpSync(compiledShellQuotePath, join(dstDir, 'utils', 'shellQuote.js'))
   cpSync(compiledPathsPath, join(dstDir, 'utils', 'paths.js'))
   cpSync(compiledSessionHistoryPath, join(dstDir, 'sessionHistory.js'))
   cpSync(compiledKernelPrefsPath, join(dstDir, 'kernelPrefs.js'))
+  cpSync(compiledBackendManifestPath, join(dstDir, 'agent', 'backend-manifest.js'))
   cpSync(compiledHandoffEventsPath, join(dstDir, 'handoffEvents.js'))
   cpSync(compiledHandoffAckPath, join(dstDir, 'handoffAck.js'))
   // dec.js 拉着 csi/ansi 的序列常量链——整个 termio 目录随镜像走。

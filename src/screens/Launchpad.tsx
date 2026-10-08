@@ -7,7 +7,7 @@ import { LogoV2 } from '../components/LogoV2.js'
 import type { Brand } from '../branding.js'
 import { resolveLaunchpadLayout, type LaunchpadLayout } from '../components/launchpadLayout.js'
 import { type LaunchpadAction } from '../components/launchpadActions.js'
-import { kernelDisplayName, kernelSubtitle, type KernelOption } from '../components/kernelCatalog.js'
+import { kernelSubtitle, type KernelOption } from '../components/kernelCatalog.js'
 import { fitParamParts, PARAM_SEPARATOR } from '../components/launchpadParams.js'
 import { useTooltip } from '../components/Tooltip.js'
 import { pickSplashFont, splashFontById, type SplashFont } from '../components/splashFonts.js'
@@ -279,7 +279,7 @@ function CornerChip({
 /**
  * 右下角内核区（第八版）：列出可选内核并标出记住的那个。第一行 TUI 版本不动，其后一行一个内核
  * ——当前内核打 `▸ ` 前缀、保持主题蓝；其余行前缀两格空格、文字 dim（前缀等宽
- * 让名字对齐）。行文本 = `短品牌名 · 副标题`（名字取 kernelDisplayName：DSH /
+ * 让名字对齐）。行文本 = `短品牌名 · 副标题`（名字取 manifest 的 shortLabel：DSH /
  * Claude——全名 40 列会挤掉左下角的目录铭牌；副标题 = 版本 / 置灰原因，缺席就
  * 只画名字，见 kernelCatalog 的 kernelSubtitle）。目标形状：
  *
@@ -672,12 +672,13 @@ export function Launchpad({
   // 行文本 = `名字 · 副标题`——副标题（版本 / 置灰原因）与选择器同源
   // （kernelSubtitle），读不到就只画名字，绝不编造。
   const tuiPart = tuiVersion === undefined || tuiVersion === '' ? undefined : `dsh-tui v${tuiVersion}`
-  // 名字用**短品牌名**（DSH / Claude，与启动页「内核 · DSH」那个 chip 同源）：
-  // 这一格与左下角的 `工作目录:分支` 共用底边，全名（DeepSeek Harness · … = 40 列）
-  // 在窄终端里会把左边的目录铭牌挤掉。选择器那一屏有地方，仍用全名（labelKey）。
+  // 名字用**短品牌名**（option.shortLabel，来自 manifest：DSH / Claude，与启动页
+  // 「内核 · DSH」那个 chip 同源）：这一格与左下角的 `工作目录:分支` 共用底边，
+  // 全名（DeepSeek Harness · … = 40 列）在窄终端里会把左边的目录铭牌挤掉。
+  // 选择器那一屏有地方，仍用全名（label）。
   const kernelRows = (kernels ?? []).map(option => {
     const subtitle = kernelSubtitle(option, key => t(key))
-    const name = kernelDisplayName(option.id)
+    const name = option.shortLabel
     return { id: option.id, current: option.current, label: subtitle === undefined ? name : name + ' \u00b7 ' + subtitle }
   })
   /** 内核区进不进焦点环：画得出来**且**接了回调（可点才需要键盘等价操作）。 */

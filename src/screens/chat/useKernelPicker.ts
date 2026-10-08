@@ -1,14 +1,17 @@
 import React from 'react'
 import type { ChannelUi } from '../../adapter/ports/channel-ui.js'
-import { buildKernelCatalog, type KernelStatus } from '../../components/kernelCatalog.js'
+import { buildKernelCatalog, type KernelEntry, type KernelStatus } from '../../components/kernelCatalog.js'
 import { WORKING_GATE_NOTICES } from '../../commands.js'
 import { t } from '../../i18n.js'
-import { KERNEL_IDS, type KernelBackendId } from '../../kernelPrefs.js'
+import type { KernelBackendId } from '../../kernelPrefs.js'
 import type { ChatOverlayAction } from '../chatOverlay.js'
 
-export function useKernelPicker({ channel, kernelVersion, launchpadShown, onProbeKernels, onSwitchBackend, canInstallSdk, dispatchOverlay }: {
+export function useKernelPicker({ channel, kernelVersion, kernelEntries, launchpadShown, onProbeKernels, onSwitchBackend, canInstallSdk, dispatchOverlay }: {
   channel: ChannelUi
   kernelVersion: string | undefined
+  /** The host's registry projection, in picker order (P0: the UI renders the
+   *  entry list it is handed and never imports the registry). */
+  kernelEntries: readonly KernelEntry[]
   launchpadShown: boolean
   onProbeKernels: (() => Promise<Record<string, KernelStatus>>) | undefined
   onSwitchBackend: ((id: KernelBackendId) => void) | undefined
@@ -24,9 +27,11 @@ export function useKernelPicker({ channel, kernelVersion, launchpadShown, onProb
     if (probeStarted.current || onProbeKernels === undefined) return
     probeStarted.current = true
     void onProbeKernels().then(setProbe).catch(() => {
-      setProbe(Object.fromEntries(KERNEL_IDS.map(id => [id, { installed: false }])))
+      // A failed probe leaves every optional backend "not installed" rather than
+      // "checking" forever; dsh needs no status (it is always available).
+      setProbe(Object.fromEntries(kernelEntries.map(entry => [entry.id, { installed: false }])))
     })
-  }, [onProbeKernels])
+  }, [onProbeKernels, kernelEntries])
   /** Force a fresh probe (the once-guard stays for the automatic paths): the
    *  SDK install wizard calls this after a successful install so the dim
    *  row lights up without a process restart. */
@@ -36,10 +41,11 @@ export function useKernelPicker({ channel, kernelVersion, launchpadShown, onProb
   }, [requestProbe])
   const options = React.useMemo(() => buildKernelCatalog({
     current: currentId,
+    entries: kernelEntries,
     ...(kernelVersion === undefined ? {} : { dshVersion: kernelVersion }),
     ...(probe === undefined ? {} : { statuses: probe }),
     canInstallSdk,
-  }), [currentId, kernelVersion, probe, canInstallSdk])
+  }), [currentId, kernelEntries, kernelVersion, probe, canInstallSdk])
   React.useEffect(() => {
     if (launchpadShown) requestProbe()
   }, [launchpadShown, requestProbe])

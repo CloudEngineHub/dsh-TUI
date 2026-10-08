@@ -1,10 +1,10 @@
 /** Non-DSH backend loading, detection and startup session ownership. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { AgentBackend, BackendHost, OAuthCredentialSource, OpenTarget, SdkInstallTarget, SdkInstaller } from '../agent/backend.js'
+import type { AgentBackend, BackendHost, OAuthCredentialSource, OpenTarget, SdkInstallSurface, SdkInstallTarget, SdkInstaller } from '../agent/backend.js'
 import type { AgentEvent } from '../agent/events.js'
 import type { AgentSession } from '../agent/session.js'
 import { formatSessionRef } from '../agent/refs.js'
-import type { KernelBackendId } from '../kernelPrefs.js'
+import { getBackend, listBackends, loadBackend } from './backend-registry.js'
 import type { KernelStatus } from '../components/kernelCatalog.js'
 import { reserveMount, reserveNewSession } from '../sessionMounts.js'
 import { resumeTargetFromArgv } from '../sessionHistory.js'
@@ -13,32 +13,27 @@ import { logForDebugging } from '../utils/debug.js'
 // Static on purpose: the install module imports no vendor package (node
 // built-ins + update.ts, which this adapter loads anyway), so a DSH-only
 // boot pays nothing for having the wizard's surface at hand.
-import { checkPnpmAvailable, CLAUDE_SDK_SPECIFIER, resolveSdkInstallTarget, startClaudeSdkInstall } from '../backends/claude/install.js'
-import { VALIDATED_SDK_VERSION } from '../backends/claude/contract.js'
+import { checkPnpmAvailable, resolveSdkInstallTarget, startClaudeSdkInstall } from '../backends/claude/install.js'
+import { CLAUDE_BACKEND_ID } from '../backends/claude/contract.js'
 import { fileChannelTokens } from '../backends/shared/channel-tokens.js'
 
-let closeCodexHubs: (() => Promise<void>) | undefined
-
-/** Close an already-loaded backend's pooled processes without loading it on DSH. */
-export async function closeBackendResources(): Promise<void> {
-  await closeCodexHubs?.()
-}
-
-export const BACKEND_LOADERS = {
-  claude: () => import('../backends/claude/index.js').then(m => m.claudeBackend),
-  codex: () => import('../backends/codex/index.js').then(m => {
-    closeCodexHubs = m.closeAllCodexHubs
-    return m.codexBackend
-  }),
-} satisfies Record<Exclude<KernelBackendId, 'dsh'>, () => Promise<AgentBackend>>
-
-/** The kernel picker's one-click SDK install surface (Chat consumes it as
- *  props; the types are the neutral ones from agent/backend.js). */
-export const sdkInstall = {
-  resolveTarget: (): SdkInstallTarget => resolveSdkInstallTarget(),
-  start: (dir: string): SdkInstaller => startClaudeSdkInstall(dir),
-  checkPnpm: (): Promise<boolean> => checkPnpmAvailable(),
-  pinned: { specifier: CLAUDE_SDK_SPECIFIER, version: VALIDATED_SDK_VERSION } as const,
+/**
+ * The host's one-click SDK install wizard, paired with the manifest data of the
+ * entry that declares it (`BackendManifest.sdkInstall`): the manifest says what
+ * and which version, the host holds the actions. P0 ships exactly one wizard
+ * (Claude's); a second backend with its own is Stage B work — until then this
+ * returns undefined when nothing declares the data, and the picker's dim row
+ * keeps its dead-end reason.
+ */
+export function sdkInstallSurface(): SdkInstallSurface | undefined {
+  const spec = getBackend(CLAUDE_BACKEND_ID)?.manifest.sdkInstall
+  if (spec === undefined) return undefined
+  return {
+    ...spec,
+    resolveTarget: (): SdkInstallTarget => resolveSdkInstallTarget(),
+    start: (dir: string): SdkInstaller => startClaudeSdkInstall(dir),
+    checkPnpm: (): Promise<boolean> => checkPnpmAvailable(),
+  }
 }
 
 const credentialSources = new Map<string, OAuthCredentialSource>()
@@ -111,6 +106,8 @@ export async function openBackendStartup(ctx: Context, backend: AgentBackend, in
   }
   return {
     session,
+    // Boot and landing-page state use the target this backend actually opened.
+    resumedSessionId: resumeId,
     label: backend.descriptor.label,
     backendId: backend.id,
     initialHistory,
@@ -124,16 +121,23 @@ export async function openBackendStartup(ctx: Context, backend: AgentBackend, in
   }
 }
 
-/** Probe optional backends lazily; failed loading leaves their row unavailable. */
+/**
+ * Probe every optional backend once (`dsh` is always available and has no
+ * loader). Loading goes through the registry, so a probed backend's pool hook is
+ * booked just like an opened one's — a backend that builds its pool in `detect()`
+ * (the contract does not forbid it) is then still closed at exit. Failures leave
+ * their row unavailable instead of failing the probe.
+ */
 export async function probeKernels(ctx: Context, cwd: string): Promise<Record<string, KernelStatus>> {
   const host = await createBackendHost(ctx, cwd, () => undefined)
   const statuses: Record<string, KernelStatus> = {}
-  for (const [id, load] of Object.entries(BACKEND_LOADERS)) {
+  for (const entry of listBackends()) {
+    if (entry.load === undefined) continue
     try {
-      statuses[id] = await (await load()).detect(host)
+      statuses[entry.id] = await (await loadBackend(entry.id)).detect(host)
     } catch (error) {
       host.debug('dsh-tui: kernel probe failed (' + (error instanceof Error ? error.message : String(error)) + ')')
-      statuses[id] = { installed: false }
+      statuses[entry.id] = { installed: false }
     }
   }
   return statuses

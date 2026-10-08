@@ -47,6 +47,8 @@ const [
   { readOnboardingPrefs },
   { isLandingLaunch },
   { noteBoundaryRecoveryRemount },
+  { kernelEntriesOf },
+  { listBackends },
 ] = await Promise.all([
   import('../src/ui.js'),
   import('../src/screens/Chat.js'),
@@ -56,7 +58,13 @@ const [
   import('../src/onboardingPrefs.js'),
   import('../src/dsh-adapter/plugin.js'),
   import('../src/ink/update-overflow-guard.js'),
+  import('../src/components/kernelCatalog.js'),
+  import('../src/dsh-adapter/backend-registry.js'),
 ])
+
+/** 内核目录：与真机组合根同源（`kernelEntriesOf(listBackends())`）——选择器那一屏
+ *  与右下角铭牌的名字都来自它，headless 宿主也得喂，否则内核行整块不存在。 */
+const KERNEL_ENTRIES = kernelEntriesOf(listBackends())
 
 let failures = 0
 let checks = 0
@@ -278,7 +286,10 @@ async function mountChat(flags: Flags, over: Record<string, unknown> = {}, chatP
           openHomeOnBoot={flags.openHomeOnBoot === true}
           launchpadOnBoot={flags.launchpadOnBoot === true}
           onboardingOnBoot={flags.onboardingOnBoot === true}
-          // 宿主注入的缝（内核选择器等）：用例按需补，缺省与真机之外的
+          // 内核目录与真机同源（P0 起由宿主注入，不再是全局闭集）：缺了它右下角
+          // 铭牌与选择器一行的内核都不存在。
+          kernelEntries={KERNEL_ENTRIES}
+          // 其余宿主注入的缝（探测、切换等）：用例按需补，缺省与真机之外的
           // headless 宿主一致（没有这些能力时 Chat 只提示、不假装）。
           {...chatProps}
         />
@@ -1051,8 +1062,10 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
     await settled(() => chat.screen().includes('未安装')),
     chat.screen().slice(0, 360))
   // 键盘路径：↓ 移到不可选行 + Enter = 只提示原因，绝不切换（选择器留在屏上）。
+  // 步数按 ID 从目录推导（P0 §1.2）：写死一次会在新增后端插到前面时落到别的行。
+  const downsToClaude = Math.max(0, KERNEL_ENTRIES.findIndex(entry => entry.id === 'claude'))
   const beforeKeys = chat.screen().slice(-300)
-  await chat.send('\x1b[B')
+  for (let step = 0; step < downsToClaude; step += 1) await chat.send('\x1b[B')
   const afterDown = chat.screen().slice(-300)
   await chat.send('\r')
   const afterEnter = chat.screen().slice(-300)

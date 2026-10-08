@@ -126,9 +126,10 @@ results back to the chat screen and add no new behavior.
 - **Corner plates**: the bottom-left working directory is **clickable** — it opens the existing
   `/workspace` menu (rendered above the launchpad; `Esc` returns to the launchpad), keyboard path =
   the focus ring's last slot + `Enter`, hover/focus = text highlight; the bottom-right plate starts
-  with `dsh-tui v<TUI>`, followed by one row for each of the two kernels:
-  `▸ DSH · dsh-core v<kernel>` / `Claude · claude-code v<CLI>`. `▸` marks the current kernel and the
-  other row stays dim; an unavailable kernel adds the reason after its version (such as *Not installed*
+  with `dsh-tui v<TUI>`, followed by one row for **each registered backend**:
+  `▸ DSH · dsh-core v<kernel>` / `Claude · claude-code v<CLI>` (then `Codex · codex-cli v<CLI>`, and any
+  installed plugin backend after it). The name is the backend manifest's short label; `▸` marks the
+  current kernel and the other rows stay dim; an unavailable kernel adds the reason after its version (such as *Not installed*
   or *Not signed in*), a row whose version cannot be read shows just the name, and *Checking…* shows
   while the probe runs. The whole block is clickable and opens the same kernel picker (keyboard path =
   focus ring + `Enter`). Rows are right-aligned, the cwd plate is top-aligned to the first row, and

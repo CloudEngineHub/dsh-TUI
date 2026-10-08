@@ -7,7 +7,7 @@
 | 目录 / 包 | 规则 |
 | --- | --- |
 | `@deepseek-ai/*` | 只在 `src/dsh-adapter/` 内 import |
-| `@anthropic-ai/*` | 只在 `src/backends/claude/` 内 import |
+| `@anthropic-ai/*` | 只在 `src/backends/claude/` 内 import(由该后端 manifest 的 `vendorPackages` 派生,见下) |
 | `@agentclientprotocol/*` | 只在 `src/backends/acp/` 内 import(为将来的 ACP 后端预留,目录尚不存在) |
 | `@dsh-std/*` | 只在 `src/adapter/standard/` 与 `src/dsh-adapter/` 内 import |
 | `src/agent/`、`src/channel/` | 不 import 厂商包、`src/dsh-adapter/`、`src/backends/` 与 `src/ink/`;`src/agent/` 也不 import `src/channel/`。唯一例外:`src/channel/sanitize.ts → src/ink/stringWidth.ts` |
@@ -17,6 +17,45 @@
 | UI 层(`screens/`、`components/`、`hooks/`、`ink/`) | 不 import `src/backends/`;从 `src/dsh-adapter/` 只取类型,运行期经 facade(`src/dsh-adapter/types.ts` 的类型 re-export、`channel.ts`/`plugin.ts` 提供的服务)接触上游。存量值 import 登记在 `scripts/adapter-boundary.allowlist.json`,只减不增 |
 | `native.dsh` | 只允许 `src/dsh-adapter/` 内访问 |
 | `native.codex` | 只允许 `src/backends/codex/` 内访问 |
+
+### 后端 manifest
+
+`src/backends/<id>/manifest.ts` 是后端对宿主、UI 与门禁的**静态声明**,纯数据:
+除 `import type` 外只允许 import 自己目录内无运行时依赖的版本常量(唯一登记例外:
+`backends/claude/manifest.ts → contract.ts`),因为构建期索引会静态 import
+每个 manifest(每次启动,含只用 DSH 的启动)。字段与语义见
+`src/agent/backend-manifest.ts`;四条容易踩的边界:
+
+- **`id`**:`^[a-z0-9][a-z0-9-]{0,31}$`(`-` 之外的分隔符一律不留,`:`
+  在 Windows 上做不了 `~/.dsh-tui/backends/<id>/` 目录)。**成员判断**由运行时注册表
+  回答——语法合法但没装的 id 与未知值同义(回落 dsh + 告警),见
+  `src/dsh-adapter/backend-registry.ts`。
+- **`vendorPackages` / `nativeKey`**:门禁的后端作用域规则由这两个字段派生;
+  `nativeKey` **缺省即"不使用 native 通道"**,凭空给某个后端补一条规则等于放宽门禁,
+  派生结果会与 `scripts/verify-adapter-boundary.ts` 里的期望快照逐字比对。
+- **`unloadExport`**:只用于**模块级/进程级资源池**(如 codex 的 app-server hub,
+  按设置指纹池化、跨会话复用);会话级资源仍归 `fiber` 的 `session.dispose()`。
+  注册表只记"真的加载过"的条目——没加载过的后端不会被 import,也不会被关池。
+- **`installable` / `sdkInstall`**:**排他特权**,不是自由数据。本宿主只实现了**一个**
+  安装向导——`src/dsh-adapter/backends.ts` 的 `sdkInstallSurface()` 静态接的就是 Claude 的
+  安装器,而选择器那层的 `sdk-install` 浮层里连后端 id 都没有,它装不了别的东西。Stage A 把
+  后端集合开给了插件与第四个 in-tree 后端;少了这条闸门,任何一个都能把自己的 dim 行变成
+  "按 Enter 装东西"的入口,而装下去的是 Claude 的 SDK——一行写着甲的名字,装下去的却是
+  乙的程序。注册表因此在准入处直接拒绝(`registerBackend`):非该 id 的后端声明这两项即抛错。
+  Stage B 给每个后端配上宿主侧安装器后,这条自然演化为"这个 id 有没有安装面"。
+
+新增一个后端 = 新建 `src/backends/<id>/`(`manifest.ts` + 实现),再把
+`pnpm compile` 重新生成的 `src/dsh-adapter/backends.generated.ts` 一并提交;
+`kernelPrefs.ts` 与 `backends.ts` 不用改,目录与身份回归也都按 ID 取项(新增目录
+不必同步它们)。唯一的例外是**边界快照**:声明了非空 `vendorPackages` 或
+`nativeKey` 的后端,派生规则会与 `scripts/verify-adapter-boundary.ts` 的
+`EXPECTED_*` 逐字比对,必须把快照与本文档一并更新(不声明这两项的后端无需改动)。
+而 `installable` / `sdkInstall` 不必费心:不是宿主能装的那个 id,声明它会被注册闸门当场
+拒绝(见上)。
+那份索引**入库**是有意的:CI 的测试组与
+`gates` 复用构建产物、不跑 `compile`,gitignore 的文件在那边不存在,
+而注册表要从 `src/` import 它(`verify-backend-registry` 会断言它与磁盘上的
+manifest 一致,过期即红)。
 
 门禁:`pnpm run verify:boundary`(`scripts/verify-adapter-boundary.ts`,扫描全部源码的
 真实 import,越界即失败;已挂进 `build`)。多后端的分层见

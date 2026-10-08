@@ -9,7 +9,7 @@
  */
 process.env.FORCE_COLOR = '3'
 
-const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { default: instances }, { findText, settled, sleep, viewportLines }] =
+const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { default: instances }, { findText, settled, sleep, viewportLines }, { kernelEntriesOf }, { listBackends }] =
   await Promise.all([
     import('node:stream'),
     import('react'),
@@ -22,6 +22,8 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
     import('../src/i18n.js'),
     import('../src/ink/instances.js'),
     import('./lib/term-test.mjs'),
+    import('../src/components/kernelCatalog.js'),
+    import('../src/dsh-adapter/backend-registry.js'),
   ])
 const { activateModernEmojiWidths } = await import('./lib/modern-widths.mjs')
 import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
@@ -102,6 +104,7 @@ const instance = await ui.render(
     approvalStore: new ApprovalStore(),
     onExit: () => undefined,
     fullscreen: false,
+    kernelEntries: kernelEntriesOf(listBackends()),
     trajectorySeen: true,
   }),
   { stdout: stdout as never, stdin: stdin as never, stderr: stdout as never, exitOnCtrlC: false, patchConsole: false },

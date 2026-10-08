@@ -436,6 +436,19 @@ const GROUPS = {
   ],
   'session-workspace': [
     ["verify-backend-startup", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-startup.ts']],
+// 后端注册表回归（P0 Stage A）：注册闸门（重复 id / 保留 id / 非 inTree 用宿主
+// 词表 / native 越权 / installable 与 sdkInstall 漂移）、五条来源的两段式解析
+// （语法合法但未装的 id → dsh + 告警，绝不打死 boot）、D4 的池记账（未加载即
+// 不 import、不关池；已加载的按序关、幂等、单条失败不阻断也不抛）、生成索引的
+// 发现/行序/失败即红，以及**坏基线必须红**——把边界门禁连同 src 副本搬进临时
+// 目录，逐条 vendor/native 规则注入一次越界 import，六条都必须失败。
+    ["verify-backend-registry", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-registry.ts']],
+// 包入口配置面（review R1）：`Config.backend` 必须继续接受普通字符串——它经
+// `src/index.ts` 的 `export *` 就在已发布入口上，声明成 branded 的 id 会让消费者
+// 原先合法的 `{ backend: 'codex' }` 变成 TS2322。用仓库自己的 tsc 编译一份真实
+// 消费者写法（`lib/types/index.d.ts`，故须在 build 之后跑），判据是零诊断：
+// 品牌回归报 TS2322，松成 any 则 `@ts-expect-error` 变 unused directive。
+    ["verify-public-config-types", ['node', 'scripts/verify-public-config-types.mjs']],
 // 内核切换过场：结局分类（spawn 失败或启动期死亡＝failed，干净退出＝succeeded 不出声，
 // 之后非零退出＝crashed）、进度行写完才 spawn、双语文案与配色、plugin.ts/update.ts 接线。
     ["verify-handoff-transition", ['node', '--import', 'tsx/esm', 'scripts/verify-handoff-transition.ts']],

@@ -53,7 +53,10 @@ export async function detectCodex(host: BackendHost & { readonly tokenStore?: Ch
     if (executable === undefined) return { installed: false, hint: t('codex-not-installed') }
     const version = executable.version
     if (!codexVersionSupported(version)) {
-      return { installed: false, ...(version === undefined ? {} : { version }), hint: t('codex-too-old', { version: version ?? '', min: MIN_CODEX_VERSION }) }
+      // `stale`: the binary is here, just older than this backend supports. The
+      // picker says "too old / upgrade", not "not installed" (P0 D5-2) — the
+      // knowledge stays here, where the version is actually known.
+      return { installed: false, stale: true, ...(version === undefined ? {} : { version }), hint: t('codex-too-old', { version: version ?? '', min: MIN_CODEX_VERSION }) }
     }
     const channel = activeProfileOf(fileCodexChannels(undefined, host.debug).read())
     let auth = detectCodexAuth(env, { channel, tokens: host.tokenStore })

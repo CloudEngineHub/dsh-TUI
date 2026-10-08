@@ -84,7 +84,7 @@ A complete common override looks like this:
 | `terminalImages` | `true` | Allow previews in supported terminals; `false` keeps text metadata and skips image probing and preview decoding. Restart to apply changes |
 | `preset` | roster default `standard` | Agent preset for new sessions; explicit configuration wins over persisted preference |
 | `sessionId` | unset | Session to resume, normally injected by the Windows `--resume` launcher |
-| `backend` | unset (the backend `/kernel` remembers, else `dsh`) | Session backend: `dsh`, or the experimental `claude` / `codex` (case-insensitive; an unknown value means `dsh`). The profile row reads `DSH_TUI_BACKEND`, which `dsh-tui --backend <id>` sets. See [Claude backend](claude-backend.en.md) |
+| `backend` | unset (the backend `/kernel` remembers, else `dsh`) | Session backend: the built-in `dsh`, or an installed backend (the experimental `claude` / `codex`, plus plugin backends; case-insensitive). **An unknown or uninstalled value starts on `dsh` with a warning**, never a crash. The profile row reads `DSH_TUI_BACKEND`, which `dsh-tui --backend <id>` sets. See [Claude backend](claude-backend.en.md) |
 
 ### Precedence and force-off
 
@@ -306,7 +306,8 @@ for the complete field reference.
 | `DSH_TUI_DISABLE_TERMINAL_IMAGES` | Set to `1` to force Kitty/Sixel probing, preview reads/decoding, and terminal image rendering off, overriding config and /settings; text metadata remains visible |
 | `DSH_TUI_IMAGE_PROTOCOL` | `auto` (default), `kitty`, `sixel`, or `none`; override protocol selection without bypassing the preview preference, disable switch, non-fullscreen, accessibility or multiplexer guards |
 | `DSH_TUI_RESUME_SESSION` | Resume a session at startup, normally set by a launcher |
-| `DSH_TUI_BACKEND` | Session backend (`dsh` / `claude`), normally set by `dsh-tui --backend` |
+| `DSH_TUI_RESUME_BACKEND` | The backend `DSH_TUI_RESUME_SESSION` was read from; set only when the launcher **derived** the target (a bare `--resume` reading that backend's last session, or the safe-mode retry following the last-run record). When the boot lands on another backend — an uninstalled id falling back to `dsh`, or the remembered kernel when `DSH_TUI_BACKEND` is absent — that target is revoked with a warning. A bare `--resume` request remains and reads the final backend's own last session. An id the user passed explicitly carries no mark and is handed over as it is |
+| `DSH_TUI_BACKEND` | Session backend (built-in `dsh` / `claude` / `codex`, or an installed plugin backend), normally set by `dsh-tui --backend`; an uninstalled or misspelled id starts on `dsh` with a warning |
 | `DSH_TUI_CLAUDE_PERMISSION_MODE` | Start permission mode of the Claude backend (`default`/`acceptEdits`/`plan`/`dontAsk`/`bypassPermissions`); wins over the mode `/permission` remembered |
 | `DSH_TUI_WORKSPACE_TARGET` | Workspace path or URI resolved at startup, normally set by `dsh-tui <target>` |
 | `DSH_TUI_SESSION_ROOT` | Override the JSONL session root; profile default `$DSH_HOME/sessions`, bare `cordis.yml` default `~/.dsh-tui/sessions` |

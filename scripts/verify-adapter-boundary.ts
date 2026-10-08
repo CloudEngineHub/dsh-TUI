@@ -3,9 +3,19 @@
  *
  *   vendor package            may only be imported from
  *   @deepseek-ai/*            src/dsh-adapter/**
- *   @anthropic-ai/*           src/backends/claude/**
+ *   @anthropic-ai/*           src/backends/claude/**        (derived from its manifest)
  *   @agentclientprotocol/*    src/backends/acp/**
  *   @dsh-std/*                src/adapter/standard/**, src/dsh-adapter/**
+ *
+ *   native.dsh                src/dsh-adapter/**             (first-party kernel)
+ *   native.<manifest key>     src/backends/<that backend>/** (derived per manifest)
+ *
+ * The two derived families (P0 §6) come from the backend manifests:
+ * `vendorPackages` yields one rule per declared package prefix, `nativeKey` one
+ * rule per backend that declares a native channel. Deriving must never *widen*
+ * the gate, so the result is compared against the expected snapshot below: a
+ * manifest that invents a rule (say `nativeKey: 'claude'` on a backend that never
+ * had one) fails here and has to be approved in ADAPTER.md first.
  *
  *   src/agent/**, src/channel/**   no vendor package (rows above), no
  *                                  src/dsh-adapter/** or src/backends/**;
@@ -30,9 +40,7 @@
  *                                  docs/codex-backend-design.md): no scoped
  *                                  (vendor) package, no concrete backend
  *                                  directory, no src/dsh-adapter/**
- *   native.dsh    only inside src/dsh-adapter/**
- *   native.codex  only inside src/backends/codex/**
- *
+
  * Plain fs + regex scan, no TypeScript program: it runs inside `verify:build`
  * on every build and must not depend on the compiled tree. Only real module
  * specifiers count (static import/export … from, bare side-effect imports,
@@ -49,6 +57,8 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import type { BackendManifest } from '../src/agent/backend-manifest.js'
 
 const SRC = resolve(import.meta.dirname, '..', 'src')
 const ALLOWLIST_FILE = join(import.meta.dirname, 'adapter-boundary.allowlist.json')
@@ -61,12 +71,40 @@ interface VendorRule {
   readonly allowedIn: readonly string[]
 }
 
-const VENDOR_RULES: readonly VendorRule[] = [
+/** Rules that cannot come from a manifest: the host framework boundary, the
+ *  protocol package of a backend directory that does not exist yet
+ *  (`ADAPTER.md:11`), and the vendored standard adapter. */
+const BUILTIN_VENDOR_RULES: readonly VendorRule[] = [
   { label: '@deepseek-ai/*', pattern: /^@deepseek-ai\//u, allowedIn: ['dsh-adapter/'] },
-  { label: '@anthropic-ai/*', pattern: /^@anthropic-ai\//u, allowedIn: ['backends/claude/'] },
   { label: '@agentclientprotocol/*', pattern: /^@agentclientprotocol\//u, allowedIn: ['backends/acp/'] },
   { label: '@dsh-std/*', pattern: /^@dsh-std\//u, allowedIn: ['adapter/standard/', 'dsh-adapter/'] },
 ]
+
+/** The rules this gate must end up with, per family. Deriving is only allowed to
+ *  reproduce exactly this (P0 §6): a manifest edit that relaxes the boundary has
+ *  to change this snapshot — and ADAPTER.md — on purpose. */
+const EXPECTED_VENDOR_RULES: readonly { readonly label: string; readonly allowedIn: readonly string[] }[] = [
+  { label: '@deepseek-ai/*', allowedIn: ['dsh-adapter/'] },
+  { label: '@anthropic-ai/*', allowedIn: ['backends/claude/'] },
+  { label: '@agentclientprotocol/*', allowedIn: ['backends/acp/'] },
+  { label: '@dsh-std/*', allowedIn: ['adapter/standard/', 'dsh-adapter/'] },
+]
+const EXPECTED_NATIVE_RULES: readonly { readonly key: string; readonly allowedIn: string }[] = [
+  { key: 'dsh', allowedIn: 'dsh-adapter/' },
+  { key: 'codex', allowedIn: 'backends/codex/' },
+]
+
+/** The one allowlisted runtime import a manifest may have: claude's SDK pin
+ *  (`VALIDATED_SDK_VERSION`, via contract.ts). Everything else in a manifest
+ *  must be types, or the build-time index would pull backend code into every
+ *  boot (P0 §4.4). */
+const MANIFEST_IMPORT_ALLOWLIST: readonly { readonly from: string; readonly to: string }[] = [
+  { from: 'backends/claude/manifest.ts', to: 'backends/claude/contract.ts' },
+]
+
+/** The host's own kernel channel: `native.dsh` is first-party by definition and
+ *  has no manifest to declare it. */
+const DSH_NATIVE_KEY = 'dsh'
 
 /** Internal targets each neutral layer must not reach; `allow` lists the
  *  explicit file→file edges that are exempt (pure leaves). */
@@ -84,16 +122,85 @@ const SCOPED_PACKAGE = /^@[^/]+\//u
 // messages and ids for every backend through createUserMessage.
 const CORE_DIR = 'dsh-adapter/channel/core/'
 
-const NATIVE_RULES: readonly { readonly key: string; readonly allowedIn: string }[] = [
-  { key: 'dsh', allowedIn: 'dsh-adapter/' },
-  { key: 'codex', allowedIn: 'backends/codex/' },
-]
+/** Read every backend manifest, fail loud when one cannot be read (a manifest
+ *  that silently disappears would silently *relax* the gate), and check that it
+ *  imports nothing but types. */
+async function readManifests(): Promise<readonly { readonly name: string; readonly manifest: BackendManifest }[]> {
+  const dir = join(SRC, 'backends')
+  const found: { name: string; manifest: BackendManifest }[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (!entry.isDirectory()) continue
+    const manifestFile = join(dir, entry.name, 'manifest.ts')
+    if (!statSync(manifestFile, { throwIfNoEntry: false })?.isFile()) continue
+    const code = maskCommentLines(readFileSync(manifestFile, 'utf8'))
+    const path = toPosix(relative(SRC, manifestFile))
+    for (const ref of collectImports(code, false)) {
+      if (ref.typeOnly) continue
+      // `./contract.js` in source means `contract.ts` on disk (the repo's
+      // compiled-specifier convention), which is how the allowlist spells it.
+      const target = resolveInternal(manifestFile, ref.specifier)?.replace(/\.js$/u, '.ts')
+      const allowed = target !== undefined && MANIFEST_IMPORT_ALLOWLIST.some(entry => entry.from === path && entry.to === target)
+      if (!allowed) {
+        console.error(`Adapter boundary violated:\n  - ${path}:${ref.line} imports '${ref.specifier}'; a manifest is pure data (types only, plus the allowlisted version constant)`)
+        process.exit(1)
+      }
+    }
+    const module: unknown = await import(pathToFileURL(manifestFile).href)
+    const manifest = (module as { manifest?: BackendManifest }).manifest
+    if (manifest === undefined || typeof manifest !== 'object') {
+      console.error(`Adapter boundary violated:\n  - ${path} must export \`manifest\`; the gate derives its rules from it`)
+      process.exit(1)
+    }
+    found.push({ name: entry.name, manifest })
+  }
+  return found
+}
 
-const NATIVE_PATTERNS = [
-  /\bnative\s*\??\.\s*(dsh|claude|codex|acp)\b/gu,
-  /\bnative\s*(?:\?\.)?\s*\[\s*['"](dsh|claude|codex|acp)['"]\s*\]/gu,
-  /\{[^{}]*?\b(dsh|claude|codex|acp)\b[^{}]*\}\s*=\s*[\w$.?!]*\bnative\b/gu,
-]
+const fail = (message: string): never => {
+  console.error(`Adapter boundary violated:\n  - ${message}`)
+  process.exit(1)
+}
+
+/** Derive the two manifest-owned rule families and pin them to the snapshot. */
+function deriveRules(manifests: readonly { readonly name: string; readonly manifest: BackendManifest }[]): {
+  readonly vendor: readonly VendorRule[]
+  readonly native: readonly { readonly key: string; readonly allowedIn: string }[]
+  readonly nativeKeys: readonly string[]
+} {
+  const vendor: VendorRule[] = [BUILTIN_VENDOR_RULES[0]!]
+  for (const { name, manifest } of manifests) {
+    for (const prefix of manifest.vendorPackages ?? []) {
+      if (manifest.inTree !== true) fail(`src/backends/${name}/manifest.ts declares vendorPackages; a non-in-tree backend may not widen the boundary`)
+      if (!/^@[^/]+\/$/u.test(prefix)) fail(`src/backends/${name}/manifest.ts: vendorPackages entry "${prefix}" must be a scoped package prefix like "@scope/"`)
+      // A prefix that overlaps a built-in rule would grant the backend a second
+      // path to a package the boundary keeps somewhere else.
+      const clashes = BUILTIN_VENDOR_RULES.find(rule => rule.label.startsWith(prefix) || prefix.startsWith(rule.label.replace(/\*$/u, '')))
+      if (clashes !== undefined) fail(`src/backends/${name}/manifest.ts: vendorPackages entry "${prefix}" overlaps the built-in rule ${clashes.label}`)
+      vendor.push({ label: `${prefix}*`, pattern: new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`), allowedIn: [`backends/${name}/`] })
+    }
+  }
+  vendor.push(...BUILTIN_VENDOR_RULES.slice(1))
+
+  const native = [{ key: DSH_NATIVE_KEY, allowedIn: 'dsh-adapter/' }]
+  for (const { name, manifest } of manifests) {
+    if (manifest.nativeKey === undefined) continue
+    if (manifest.inTree !== true) fail(`src/backends/${name}/manifest.ts declares nativeKey; native channels are a first-party privilege`)
+    if (manifest.nativeKey === DSH_NATIVE_KEY) fail(`src/backends/${name}/manifest.ts must not claim native.${DSH_NATIVE_KEY} (the host's own channel)`)
+    if (manifest.nativeKey !== manifest.id) fail(`src/backends/${name}/manifest.ts: nativeKey "${manifest.nativeKey}" must equal the backend id, so the rule cannot point at another backend's directory`)
+    native.push({ key: manifest.nativeKey, allowedIn: `backends/${name}/` })
+  }
+
+  const derivedVendor = vendor.map(rule => ({ label: rule.label, allowedIn: rule.allowedIn }))
+  if (JSON.stringify(derivedVendor) !== JSON.stringify(EXPECTED_VENDOR_RULES)) {
+    fail(`derived vendor rules differ from the expected snapshot:\n      derived:  ${JSON.stringify(derivedVendor)}\n      expected: ${JSON.stringify(EXPECTED_VENDOR_RULES)}\n    (update ADAPTER.md and this snapshot together when the boundary really changes)`)
+  }
+  if (JSON.stringify(native) !== JSON.stringify(EXPECTED_NATIVE_RULES)) {
+    fail(`derived native rules differ from the expected snapshot:\n      derived:  ${JSON.stringify(native)}\n      expected: ${JSON.stringify(EXPECTED_NATIVE_RULES)}\n    (update ADAPTER.md and this snapshot together when the boundary really changes)`)
+  }
+  // Every name a `native.<key>` read could spell, for the read detector below.
+  const nativeKeys = [...new Set([...native.map(rule => rule.key), 'acp', ...manifests.map(({ manifest }) => manifest.id)])]
+  return { vendor, native, nativeKeys }
+}
 
 interface ImportRef {
   readonly specifier: string
@@ -190,6 +297,20 @@ function readAllowlist(): AllowlistEntry[] {
   })
 }
 
+// The manifest-derived rules (P0 §6). Read before the scan: a manifest that
+// cannot be read or does not parse must fail the gate, never silently drop its
+// rule (that would widen the boundary without a word).
+const MANIFESTS = await readManifests()
+const { vendor: VENDOR_RULES, native: NATIVE_RULES, nativeKeys } = deriveRules(MANIFESTS)
+/** Read detectors for every name a `native.<key>` read could spell. The
+ *  alternation is deliberate: a wildcard would flag the local `native` bindings
+ *  the DSH channel code legitimately uses (`const native = …capabilities.native.dsh`). */
+const NATIVE_PATTERNS = [
+  new RegExp(`\\bnative\\s*\\??\\.\\s*(${nativeKeys.join('|')})\\b`, 'gu'),
+  new RegExp(`\\bnative\\s*(?:\\?\\.)?\\s*\\[\\s*['"](${nativeKeys.join('|')})['"]\\s*\\]`, 'gu'),
+  new RegExp(`\\{[^{}]*?\\b(${nativeKeys.join('|')})\\b[^{}]*\\}\\s*=\\s*[\\w$.?!]*\\bnative\\b`, 'gu'),
+]
+
 const allowlist = readAllowlist()
 const allowKey = (from: string, to: string): string => `${from} -> ${to}`
 const allowed = new Set(allowlist.map(entry => allowKey(entry.from, entry.to)))
@@ -259,7 +380,7 @@ for (const file of files) {
     for (const match of code.matchAll(pattern)) {
       const rule = NATIVE_RULES.find(candidate => candidate.key === match[1])
       if (rule === undefined) {
-        violations.push(`${path}:${lineAt(code, match.index)} reads native.${match[1]}; only native.dsh is declared`)
+        violations.push(`${path}:${lineAt(code, match.index)} reads native.${match[1]}; declared native channels: ${NATIVE_RULES.map(rule => rule.key).join(', ')}`)
       } else if (under(path, CORE_DIR) && rule.key === 'dsh') {
         violations.push(`${path}:${lineAt(code, match.index)} reads native.dsh; channel core must not access native backend slots`)
       } else if (rule && !under(path, rule.allowedIn)) {

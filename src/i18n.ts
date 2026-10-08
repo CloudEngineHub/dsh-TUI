@@ -2425,6 +2425,9 @@ const dict = {
   'launchpad-action-update': { zh: '有新版本', en: 'Update available' },
   'launchpad-action-star': { zh: '投喂一颗 Star', en: 'Feed us a star' },
   // 内核选择器：行标签、不可选原因、切换重启提示。
+  // 这三个 label 键只给**随包内置**的后端（manifest 的 `inTree: true` /
+  // `label.kind: 'key'`）。插件后端的名字是外部字面量：原样渲染、不进本字典、
+  // 不过 t()（P0 D2，见 components/KernelPicker.tsx）。
   'kernel-label-dsh': { zh: 'DeepSeek Harness', en: 'DeepSeek Harness' },
   'kernel-label-claude': { zh: 'Claude Agent', en: 'Claude Agent' },
   'kernel-label-codex': { zh: 'Codex', en: 'Codex' },

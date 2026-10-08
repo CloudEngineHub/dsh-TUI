@@ -11,9 +11,9 @@
  *
  * The compiled startup statements are pulled out of lib/types/dsh-adapter/
  * plugin.js once, here, and handed to every probe through a file, and the
- * probe imports only the dependency-free startup parser — not the whole
- * plugin graph. That made each case ~1.4 s cheaper; the cases themselves run
- * concurrently. Every case still goes through the real bin and its delegation.
+ * probe imports the parsers, registry and generic backend startup without
+ * mounting the plugin runtime. A fake backend replaces the native process;
+ * every case still goes through the real bin and its delegation.
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
@@ -22,7 +22,7 @@ import { createRequire } from 'node:module'
 import { availableParallelism, tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { runInNewContext } from 'node:vm'
+import { createContext, runInContext } from 'node:vm'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const bin = join(root, 'bin/dsh-tui.js')
@@ -52,7 +52,7 @@ if (probeMode) {
       patches: program.opts().patch ?? [],
       fromDefaultProfile: program.opts().fromDefaultProfile ?? null,
     },
-    session: null, workspace: null, submitted: [],
+    backend: null, session: null, workspace: null, submitted: [],
     resumeEnv: process.env.DSH_TUI_RESUME_SESSION ?? null,
     workspaceEnv: process.env.DSH_TUI_WORKSPACE_TARGET ?? null,
     ...app,
@@ -92,21 +92,66 @@ if (probeMode) {
 
   const { initialPromptFromCmdlineArgs } = await import('../lib/types/dsh-adapter/startup-args.js')
   const { resumeTargetFromArgv } = await import('../lib/types/sessionHistory.js')
-  const { startup, submit } = JSON.parse(readFileSync(process.env.DSH_TUI_ARGV_STARTUP, 'utf8'))
+  const { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget } = await import('../lib/types/kernelPrefs.js')
+  const { isRegisteredBackend, parseBackendChoice } = await import('../lib/types/dsh-adapter/backend-registry.js')
+  const { startup, resolution, target, submit } = JSON.parse(readFileSync(process.env.DSH_TUI_ARGV_STARTUP, 'utf8'))
   const submitted = []
   const scope = {
     ctx, process, initialPromptFromCmdlineArgs, resumeTargetFromArgv,
+    KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs,
+    resolveRememberedBackend, resolveResumeTarget, isRegisteredBackend, parseBackendChoice,
     config: {
+      backend: process.env.DSH_TUI_BACKEND,
       sessionId: process.env.DSH_TUI_RESUME_SESSION,
       workspace: process.env.DSH_TUI_WORKSPACE_TARGET,
     },
     shadow: false,
+    backendStart: undefined,
     channel: { submit: text => submitted.push(text) },
   }
-  runInNewContext([
-    ...startup, submit,
-    'globalThis.targets = { session: launchSessionId ?? null, workspace: requestedWorkspace ?? null }',
-  ].join('\n'), scope)
+  const context = createContext(scope)
+  runInContext([
+    ...startup,
+    'globalThis.backendInput = { backend: backendChoice, sessionId: configuredSessionId, argv: cmdlineArgs ?? process.argv.slice(2) }',
+  ].join('\n'), context)
+  if (scope.backendInput.backend !== 'dsh') {
+    // Replace only the native process boundary. The real startup adapter reads
+    // this backend's marker and chooses create/resume against the real ledger.
+    const { openBackendStartup } = await import('../lib/types/dsh-adapter/backends.js')
+    const backendId = scope.backendInput.backend
+    const backend = {
+      id: backendId,
+      descriptor: { label: 'Argv fixture' },
+      launch: {
+        sessionPrefs: () => ({
+          lastSession: () => {
+            try {
+              return JSON.parse(readFileSync(join(process.env.HOME, '.dsh-tui/backends', backendId, 'prefs.json'), 'utf8')).lastSession
+            } catch {
+              return undefined
+            }
+          },
+          setLastSession: () => undefined,
+          touch: () => undefined,
+        }),
+        resumeCommand: id => `fixture --resume ${id}`,
+      },
+      open: async target => ({
+        ref: { backendId, sessionId: target.kind === 'resume' ? target.sessionId : 'created-session' },
+        history: async () => [],
+        dispose: async () => undefined,
+      }),
+    }
+    scope.backendStart = await openBackendStartup(ctx, backend, {
+      cwd: process.cwd(), stderr: () => undefined,
+      ...(scope.backendInput.sessionId === undefined ? {} : { configuredSessionId: scope.backendInput.sessionId }),
+      argv: scope.backendInput.argv,
+    })
+  }
+  runInContext([
+    ...resolution, submit,
+    `globalThis.targets = { backend: backendChoice, session: ${target} ?? null, workspace: requestedWorkspace ?? null }`,
+  ].join('\n'), context)
   report('profile', { ...scope.targets, submitted })
   process.exit(0)
 }
@@ -125,14 +170,29 @@ async function compiledStartup() {
       declarations.set(declaration.name.getText(source), statement.getText(source))
     }
   }
-  const names = ['cmdline', 'cmdlineArgs', 'requestedWorkspace', 'launchSessionId', 'submitChannel', 'initialPrompt']
+  const names = [
+    'cmdline', 'cmdlineArgs', 'requestedWorkspace', 'launchSessionId', 'submitChannel', 'initialPrompt',
+    'rawBackend', 'handoffBackendRaw', 'handoffBackend', 'rememberedBackend', 'backendChoice',
+    'resumeBackendRaw', 'resumeTarget', 'effectiveSessionId', 'configuredSessionId',
+  ]
   const startup = names.map(name => {
     assert.ok(declarations.has(name), `compiled startup declaration: ${name}`)
     return declarations.get(name)
   })
   const submit = apply.body.statements.find(node => ts.isIfStatement(node) && node.expression.getText(source) === 'initialPrompt')
   assert.ok(submit, 'compiled initial prompt submission branch exists')
-  return { startup, submit: submit.getText(source) }
+  let target
+  const visit = node => {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'resolveAgent') {
+      assert.ok(ts.isIdentifier(node.arguments[1]), 'DSH startup consumes a named resume target')
+      target = node.arguments[1].text
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(apply.body)
+  assert.ok(target && declarations.has(target), 'compiled resume target passed to resolveAgent exists')
+  const resolution = names.includes(target) ? [] : [declarations.get(target)]
+  return { startup, resolution, target, submit: submit.getText(source) }
 }
 
 /** spawnSync's result shape, without blocking the other cases. */
@@ -171,6 +231,8 @@ try {
   // The Claude backend's own last-session marker (never resume.txt).
   mkdirSync(join(temp, '.dsh-tui/backends/claude'), { recursive: true })
   writeFileSync(join(temp, '.dsh-tui/backends/claude/prefs.json'), JSON.stringify({ lastSession: 'claude-last' }))
+  mkdirSync(join(temp, '.dsh-tui/backends/missing-agent'), { recursive: true })
+  writeFileSync(join(temp, '.dsh-tui/backends/missing-agent/prefs.json'), JSON.stringify({ lastSession: 'foreign-session' }))
   writeFileSync(patch, '[]\n')
   writeFileSync(join(temp, '--resume=patch-file'), '[]\n')
   const isWin = process.platform === 'win32'
@@ -224,10 +286,19 @@ try {
     // Phase 4b: a bare --resume of the Claude backend reopens ITS last session
     // (the backend may be named after the flag); explicit ids and DSH's
     // "each flag sets it, the last wins" are unchanged.
-    { name: 'Claude bare resume reads the Claude marker', hostArgs: [], argv: ['--backend', 'claude', '--resume'], session: 'claude-last', prompt: '', binOnly: true },
-    { name: 'Claude bare resume before --backend', hostArgs: [], argv: ['--resume', '--backend', 'claude'], session: 'claude-last', prompt: '', binOnly: true },
-    { name: 'Claude explicit resume', hostArgs: [], argv: ['--backend', 'claude', '--resume', 'claude-explicit'], session: 'claude-explicit', prompt: '', binOnly: true },
+    { name: 'Claude bare resume reads the Claude marker', hostArgs: [], argv: ['--backend', 'claude', '--resume'], backend: 'claude', session: 'claude-last', prompt: '', binOnly: true },
+    { name: 'Claude bare resume before --backend', hostArgs: [], argv: ['--resume', '--backend', 'claude'], backend: 'claude', session: 'claude-last', prompt: '', binOnly: true },
+    { name: 'Claude explicit resume', hostArgs: [], argv: ['--backend', 'claude', '--resume', 'claude-explicit'], backend: 'claude', session: 'claude-explicit', prompt: '', binOnly: true },
     { name: 'DSH bare resume after an explicit one (last wins)', hostArgs: [], argv: ['--resume', 'explicit-first', '--resume'], session: 'remembered-session', prompt: '', binOnly: true },
+    // The final boot target must follow the selected backend, including when the
+    // launcher cannot establish membership and an earlier marker is revoked.
+    { name: 'unknown env with no preference still resumes DSH', argv: ['--resume'], envBackend: 'claud', session: 'remembered-session', resumeEnv: null, prompt: '' },
+    { name: 'unknown env with a foreign preference resumes the DSH marker', argv: ['--resume'], envBackend: 'missing-agent', session: 'remembered-session', resumeEnv: 'foreign-session', prompt: '' },
+    { name: 'unknown flag preserves a bare resume before literal input', argv: ['--backend', 'claud', '--resume', '--', '--resume=literal'], session: 'remembered-session', resumeEnv: null, prompt: '--resume=literal', binOnly: true },
+    { name: 'bare resume does not consume the following prompt', argv: ['--resume', '--backend', 'claud', 'explain'], session: 'remembered-session', resumeEnv: null, prompt: 'explain', binOnly: true },
+    { name: 'an explicit final resume wins over a preceding bare one', argv: ['--backend', 'missing-agent', '--resume', '--resume', 'explicit-last'], session: 'explicit-last', prompt: '', binOnly: true },
+    { name: 'remembered Claude uses its own marker after revoking the DSH marker', argv: ['--resume'], memoryBackend: 'claude', backend: 'claude', session: 'claude-last', resumeEnv: 'remembered-session', prompt: '', binOnly: true },
+    { name: 'a backend with no resume history stays a fresh launch', argv: ['--backend', 'claude', '--resume'], noClaudeMarker: true, backend: 'claude', session: null, resumeEnv: null, prompt: '', binOnly: true },
   ]
   // stripResumeArgs: the ONE grammar that decides what a respawned process
   // must not inherit. A kernel switch respawns onto the other backend, where
@@ -269,11 +340,28 @@ try {
         const argv = direct
           ? [self, '--profile', 'dsh-tui', ...hostArgs, ...(test.argv.length ? ['--', ...test.argv] : [])]
           : [bin, ...hostArgs, ...test.argv]
+        // Native startup touches the ledger. Keep each probe's HOME independent,
+        // while the immutable profile and workspace fixtures remain shared.
+        const caseHome = join(temp, 'homes', String(runs.length))
+        const casePrefs = join(caseHome, '.dsh-tui')
+        mkdirSync(casePrefs, { recursive: true })
+        copyFileSync(join(temp, '.dsh-tui/resume.txt'), join(casePrefs, 'resume.txt'))
+        for (const backend of ['claude', 'missing-agent']) {
+          if (backend === 'claude' && test.noClaudeMarker) continue
+          mkdirSync(join(casePrefs, 'backends', backend), { recursive: true })
+          copyFileSync(join(temp, '.dsh-tui/backends', backend, 'prefs.json'), join(casePrefs, 'backends', backend, 'prefs.json'))
+        }
+        if (test.memoryBackend !== undefined) writeFileSync(join(casePrefs, 'kernel.json'), JSON.stringify({ backend: test.memoryBackend }))
         runs.push({
           label: `${route}/${shape}: ${test.name}`, direct, test,
           start: () => run(process.execPath, argv, {
             cwd: temp, timeout: 15000,
-            env: { ...env, DSH_TUI_ARGV_SHAPE: shape, ...(route === 'bin' ? { DSH_TUI_NO_DELEGATE: '1' } : {}) },
+            env: {
+              ...env, DSH_TUI_ARGV_SHAPE: shape,
+              HOME: caseHome, USERPROFILE: caseHome,
+              ...(test.envBackend === undefined ? {} : { DSH_TUI_BACKEND: test.envBackend }),
+              ...(route === 'bin' ? { DSH_TUI_NO_DELEGATE: '1' } : {}),
+            },
           }),
         })
       }
@@ -293,10 +381,11 @@ try {
       assert.deepEqual(JSON.parse(result.stdout), {
         mode: test.mode ?? 'profile',
         hostOptions: { patches: test.patches ?? [], fromDefaultProfile: test.fromDefaultProfile ?? null },
+        backend: test.mode === undefined ? test.backend ?? 'dsh' : null,
         session: test.session ?? null,
         workspace: test.workspace ?? null,
         submitted: test.prompt ? [test.prompt] : [],
-        resumeEnv: direct ? null : test.session ?? null,
+        resumeEnv: direct ? null : test.resumeEnv === undefined ? test.session ?? null : test.resumeEnv,
         workspaceEnv: test.workspace ?? null,
       })
       console.log(`PASS: ${label}`)

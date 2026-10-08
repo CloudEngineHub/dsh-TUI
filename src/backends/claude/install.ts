@@ -21,10 +21,7 @@ import stripAnsi from 'strip-ansi'
 import type { SdkInstallResult, SdkInstallTarget, SdkInstaller } from '../../agent/backend.js'
 import { isStandaloneRuntime, profileWorkspaceYamlPath, resolveDshProfileName } from '../../update.js'
 import { shellQuote } from '../../utils/shellQuote.js'
-import { VALIDATED_SDK_VERSION } from './contract.js'
-
-/** What `pnpm add` installs, at the validated pin (see contract.ts). */
-export const CLAUDE_SDK_SPECIFIER = `@anthropic-ai/claude-agent-sdk@${VALIDATED_SDK_VERSION}`
+import { CLAUDE_SDK_SPECIFIER } from './contract.js'
 
 export type { SdkInstallTarget, SdkInstallResult, SdkInstaller } from '../../agent/backend.js'
 

@@ -9,7 +9,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { SessionModeSpec } from '../sessionModes.js'
-import { isKernelId, type KernelBackendId } from '../kernelPrefs.js'
+import { parseBackendChoice } from './backend-registry.js'
+import type { KernelBackendId } from '../kernelPrefs.js'
 import { BTW_CONTEXT_BUDGET_DEFAULT, BTW_CONTEXT_TURNS_DEFAULT, DEFAULT_COMPANION_SKIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, normalizeBtwContextBudget, normalizeBtwContextTurns, normalizeCompanionSkin, normalizePageMargin, normalizeSidePanelPanels, normalizeSidePanelRatio, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../components/splashFonts.js'
@@ -41,8 +42,16 @@ export interface Config {
    *  the local Claude CLI through the Claude Agent SDK (optional peer
    *  `@anthropic-ai/claude-agent-sdk`); `codex`, the experimental Codex
    *  backend driving the user's own `codex` CLI over `codex app-server`.
-   *  `dsh-tui --backend <id>` sets it through `DSH_TUI_BACKEND`. */
-  backend?: KernelBackendId
+   *  `dsh-tui --backend <id>` sets it through `DSH_TUI_BACKEND`.
+   *
+   *  A plain `string` on purpose: this is the **input** surface, so an embedder
+   *  writing `{ backend: 'codex' }` keeps compiling. The value is gated right
+   *  below (`normalizeBackendChoice`: syntax, then registry) and the boot re-reads
+   *  it through that same gate — the `BackendId` brand stays inside the package,
+   *  where it guards session refs and `~/.dsh-tui/backends/<id>/` paths. Declaring
+   *  the branded `KernelBackendId` here breaks published consumers instead
+   *  (PR #1380 review R1). */
+  backend?: string
   /** LLM provider route. The route resolves atomically (issue #67): when
    *  cordis.yml names BOTH `provider` and `model`, that pair wins; otherwise
    *  the `/model` choice persisted in `~/.dsh-tui/model.json` wins whole;
@@ -254,12 +263,12 @@ export interface Config {
   modes?: SessionModeSpec[]
 }
 
-/** The backend a configured value names: case-insensitive, trimmed;
- *  empty or unknown → undefined (the DSH default). */
+/** The backend a configured value names: case-insensitive, trimmed, and
+ *  **registered** — both halves of the parse (P0 D1). Empty, malformed, or a
+ *  well-formed id that no installed backend answers to → undefined, which the
+ *  Config row and the boot both read as "not configured" (the DSH default). */
 export function normalizeBackendChoice(value: unknown): KernelBackendId | undefined {
-  if (typeof value !== 'string') return undefined
-  const id = value.trim().toLowerCase()
-  return isKernelId(id) ? id : undefined
+  return parseBackendChoice(value)
 }
 
 export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Config>(Schema.object({

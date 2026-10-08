@@ -172,6 +172,10 @@ Full guide: [Session migration](docs/migrate.en.md).
 
 **VS Code**: use the integrated terminal or the `dsh-tui-vscode` extension. See [VS Code guide](docs/vscode.en.md). **Herdr**: run `dsh-tui` in a [Herdr](https://herdr.dev) pane; `idle` / `working` / `blocked` are reported through its local integration API.
 
+Bare `--resume` (`-c`, `--continue`) reopens the selected backend's last session.
+If an unknown backend id falls back to DSH, it uses DSH's resume marker.
+An explicit `--resume <id>` passes that id to the selected backend.
+
 ### Experimental: Claude backend
 
 dsh-TUI can also run its session on Claude: the same interface, driving the
