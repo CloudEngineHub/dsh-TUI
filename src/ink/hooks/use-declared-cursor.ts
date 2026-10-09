@@ -1,4 +1,4 @@
-import { useCallback, useContext, useLayoutEffect, useRef } from 'react'
+import { useCallback, useContext, useLayoutEffect, useRef, type RefCallback } from 'react'
 import CursorDeclarationContext, { NativeCursorContext } from '../components/CursorDeclarationContext.js'
 import type { DOMElement } from '../dom.js'
 
@@ -14,7 +14,7 @@ import type { DOMElement } from '../dom.js'
  * The declared (line, column) is interpreted relative to that Box's
  * nodeCache rect (populated by renderNodeToOutput).
  *
- * Timing: Both ref attach and useLayoutEffect fire in React's layout
+ * Timing: Both ref attach and useLayoutEffect declare in React's layout
  * phase — after resetAfterCommit calls scheduleRender. scheduleRender
  * defers onRender via queueMicrotask, so onRender runs AFTER layout
  * effects commit and reads the fresh declaration on the first frame
@@ -32,14 +32,26 @@ export function useDeclaredCursor(options: {
   column: number
   active: boolean
   visible?: boolean
-}): (element: DOMElement | null) => void {
+}): RefCallback<DOMElement> {
   const { line, column, active, visible = false } = options
   const setCursorDeclaration = useContext(CursorDeclarationContext)
   const nodeRef = useRef<DOMElement | null>(null)
 
-  const setNode = useCallback((node: DOMElement | null) => {
+  const setNode = useCallback<RefCallback<DOMElement>>(node => {
     nodeRef.current = node
-  }, [])
+    if (node === null) return
+    // A store-driven editor layer can attach after the caller's layout
+    // effect, so claim its cursor as soon as the node is attached.
+    if (active) {
+      setCursorDeclaration({ relativeX: column, relativeY: line, node, visible })
+    }
+    // React 19 binds this cleanup to the attached node. A withdrawn editor
+    // must not erase the inline node that has already taken over this ref.
+    return () => {
+      setCursorDeclaration(null, node)
+      if (nodeRef.current === node) nodeRef.current = null
+    }
+  }, [active, column, line, setCursorDeclaration, visible])
 
   // When active, set unconditionally. When inactive, clear conditionally
   // (only if the currently-declared node is ours). The node-identity check
@@ -63,9 +75,8 @@ export function useDeclaredCursor(options: {
     }
   })
 
-  // Clear on unmount (conditionally — another instance may own by then).
-  // Separate effect with empty deps so cleanup only fires once — not on
-  // every line/column change, which would transiently null between commits.
+  // Withdraw on hook unmount as well: its ref may live in an independently
+  // committed editor layer that has not detached yet.
   useLayoutEffect(() => {
     return () => {
       setCursorDeclaration(null, nodeRef.current)

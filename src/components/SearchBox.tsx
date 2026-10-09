@@ -155,7 +155,12 @@ export function SearchBox({
   const boxRef = useCallback(
     (node: DOMElement | null) => {
       boxNodeRef.current = node
-      declarationRef(node)
+      const cleanup = declarationRef(node)
+      if (node === null) return
+      return () => {
+        if (typeof cleanup === 'function') cleanup()
+        if (boxNodeRef.current === node) boxNodeRef.current = null
+      }
     },
     [declarationRef],
   )

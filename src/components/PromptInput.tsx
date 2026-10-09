@@ -4219,8 +4219,8 @@ export function PromptInput({
   // ── 全屏草稿编辑节点 ────────────────────────────────────────────────
   // 每次渲染构造新鲜闭包（value/caret/handlers），经 module store 发布给
   // Chat 根部末尾的 PromptEditorLayer（树序最后 → 盖住全部后绘兄弟）。
-  // useInsertionEffect 发布：sink 的同步重渲染发生在 layout 阶段之前，
-  // useDeclaredCursor（layout effect）读到的新 ref 已指向编辑区 Box。
+  // useInsertionEffect 发布：sink 经 store 独立提交，useDeclaredCursor
+  // 在 layout effect 与 ref 挂载时声明，编辑区稍后挂载也能接管光标。
   // 点击/拖拽坐标以内容区为原点（localCol 去掉行号槽宽度）。
   const editorNode = editorVisible ? (
     <Box

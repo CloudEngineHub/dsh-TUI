@@ -1,6 +1,7 @@
 /**
  * Native caret regression: inline/fullscreen, narrow widths, repaint ordering,
- * uninterrupted cursor-only motion, focus handoff, resize, resume and cleanup.
+ * uninterrupted cursor-only motion, editor handoff/clearing, focus, resize,
+ * resume and cleanup.
  * Uses the real renderer and xterm/headless; no model or credentials required.
  * Run: node --import tsx/esm scripts/verify-native-cursor.tsx
  */
@@ -16,8 +17,9 @@ delete process.env.TMUX
 const [
   { default: assert }, React, { Terminal: XTerm }, { PassThrough, Writable },
   { mkdtempSync, openSync, closeSync, readFileSync, rmSync }, { tmpdir }, { join },
-  { render, Box, Text, InputCaret, AlternateScreen, useDeclaredCursor, useNativeCursor, useTerminalSize },
+  { render, Box, Text, InputCaret, AlternateScreen, useDeclaredCursor, useNativeCursor, useTerminalSize, useInput },
   { ListItem }, { SearchBox }, { PromptInput }, { default: instances }, { renderToScreen }, { cellAt },
+  { PromptEditorLayer },
   { settled, viewportLines, writeParsed },
 ] = await Promise.all([
   import('node:assert/strict'), import('react'), import('@xterm/headless'), import('node:stream'),
@@ -25,6 +27,7 @@ const [
   import('../src/components/design-system/ListItem.js'), import('../src/components/SearchBox.js'),
   import('../src/components/PromptInput.js'),
   import('../src/ink/instances.js'), import('../src/ink/render-to-screen.js'), import('../src/ink/screen.js'),
+  import('../src/components/PromptEditor.js'),
   import('./lib/term-test.mjs'),
 ])
 
@@ -271,6 +274,84 @@ for (const fullscreen of [false, true]) {
       'the unfolded draft caret includes its fold-prefix width')
   } finally {
     await h.close(app)
+  }
+}
+
+// The fullscreen editor lives in a separate store-driven layer. Closing it
+// must return the caret to the inline value node before Ctrl+C clears it.
+for (const fullscreen of [false, true]) {
+  for (const width of [80, 40]) {
+    const h = makeHarness(width, 24)
+    const controller: { current: PromptController | null } = { current: null }
+    const channel = {
+      mode: { id: 'default', plan: false }, modeIndex: 0, cycleMode() {},
+      commandList: [], commandCompletions: () => [], notifications: [], pending: [],
+      working: false, notify() {}, submit() {}, steer() {}, interruptAndDeliver() { return 0 },
+      removePending() { return false }, stageImage() {}, listFiles: async () => [], sessionColor: '',
+    }
+    function EditorFixture(): ReactNode {
+      // Mirror Chat's idle Ctrl+C route through the real prompt controller.
+      useInput((input, key, event) => {
+        if (key.ctrl && input === 'c' && controller.current?.hasText()) {
+          controller.current.clear()
+          event.stopImmediatePropagation()
+        }
+      }, { prepend: true })
+      return <Box height={24} flexDirection="column" justifyContent="flex-end">
+        <PromptInput channel={channel as never} controllerRef={controller} helpOpen={false}
+          onToggleHelp={() => {}} onRunCommand={() => false} selectionActive={false} />
+        <PromptEditorLayer />
+      </Box>
+    }
+    const tree = <EditorFixture />
+    const app = await render(fullscreen ? <AlternateScreen mouseTracking={false}>{tree}</AlternateScreen> : tree, {
+      stdout: h.stdout, stdin: h.stdin, stderr: h.stderr,
+      exitOnCtrlC: false, patchConsole: false, terminalImages: false,
+    })
+    const caretAt = (column: number) => {
+      const prompt = h.find('❯')
+      return prompt !== null && h.visible()
+        && h.cursor().x === prompt.x + 2 + column && h.cursor().y === prompt.y
+    }
+    try {
+      instances.get(h.stdout)!.onRender()
+      await h.flush()
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const draft = cycle === 0 ? 'draft' : 'draft\nmiddle\nend'
+        const lastLine = draft.split('\n').at(-1)!
+        const atDraftEnd = () => {
+          const end = h.find(lastLine)
+          return end !== null && h.visible()
+            && h.cursor().x === end.x + lastLine.length && h.cursor().y === end.y
+        }
+        h.stdin.write(`\x1b[200~${draft}\x1b[201~`)
+        assert.ok(await settled(() => h.find('draft') !== null), 'draft is typed into the main input')
+        h.stdin.write('\x1b[69;6u')
+        assert.ok(await settled(() => h.find('Draft editor') !== null), 'the fullscreen draft editor opens')
+        // At 40 columns the existing editor chrome can clip the textarea;
+        // verify its caret immediately when the editing area is visible.
+        if (width === 80) {
+          assert.ok(await settled(atDraftEnd), 'the fullscreen editor immediately claims its native caret')
+        }
+        h.stdin.write('\x1b')
+        assert.ok(await settled(() => h.find('Draft editor') === null && atDraftEnd()), 'Esc immediately returns the caret to the main input')
+        h.stdin.write('\x03')
+        assert.ok(await settled(() => controller.current?.text() === '' && caretAt(0)),
+          `Ctrl+C leaves a visible caret at the empty input: ${JSON.stringify({ cursor: h.cursor(), visible: h.visible(), screen: viewportLines(h.term) })}`)
+
+        h.stdin.write('a中🙂b')
+        assert.ok(await settled(() => caretAt(6) && h.find('a中🙂b') !== null), 'typing after clearing advances the native caret')
+        for (const column of [5, 3, 1, 0]) {
+          h.stdin.write('\x1b[D')
+          assert.ok(await settled(() => caretAt(column)), 'arrow movement follows display-cell boundaries after editor handoff')
+        }
+        h.stdin.write('\x03')
+        assert.ok(await settled(() => controller.current?.text() === '' && caretAt(0)), 'clearing the edited draft keeps the caret active')
+      }
+      console.log(`PASS native cursor editor handoff: ${fullscreen ? 'fullscreen' : 'inline'} ${width} cols`)
+    } finally {
+      await h.close(app)
+    }
   }
 }
 
