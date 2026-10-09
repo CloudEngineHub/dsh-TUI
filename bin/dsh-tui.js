@@ -569,7 +569,20 @@ if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
   process.exit(0)
 }
 /**
- * Whether the DSH credential store declares a reference by this name.
+ * The credential documents a read may consult, most authoritative first: the
+ * active home's store, then the default `~/.dsh` store. A `DSH_HOME` override
+ * moves the harness home, but a key the user stored where both READMEs name it
+ * must keep counting as set instead of failing the doctor.
+ * @param home - The DSH home directory that owns `.credentials.yaml`.
+ * @returns Candidate file paths, most authoritative first.
+ */
+const credentialStoreFiles = home => {
+  const active = join(home, '.credentials.yaml')
+  const fallback = join(homedir(), '.dsh', '.credentials.yaml')
+  return active === fallback ? [active] : [active, fallback]
+}
+/**
+ * Whether any DSH credential store declares a reference by this name.
  *
  * The launcher stays dependency-free, so the YAML is read as text: only the
  * top-level `refs:` block maps reference names to stored secrets, and matching
@@ -581,15 +594,17 @@ if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
  * @returns True when a `refs` entry with that name exists.
  */
 const credentialRefDeclared = (home, name) => {
-  try {
-    const text = readFileSync(join(home, '.credentials.yaml'), 'utf8')
-    const block = /^refs:[ \t]*\r?\n((?:[ \t]+\S.*(?:\r?\n|$))*)/mu.exec(text)
-    if (block === null) return false
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    return new RegExp(`^[ \t]+${escaped}[ \t]*:`, 'mu').test(block[1])
-  } catch {
-    return false
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const pattern = new RegExp(`^[ \t]+${escaped}[ \t]*:`, 'mu')
+  for (const file of credentialStoreFiles(home)) {
+    try {
+      const block = /^refs:[ \t]*\r?\n((?:[ \t]+\S.*(?:\r?\n|$))*)/mu.exec(readFileSync(file, 'utf8'))
+      if (block !== null && pattern.test(block[1])) return true
+    } catch {
+      // An unreadable or absent store simply does not declare the ref.
+    }
   }
+  return false
 }
 
 // ─── doctor 检查逻辑（doctor 子命令与 safe 会话共用）──────────────────────────

@@ -237,7 +237,10 @@ subscription tokens are only injected on first-party routes. dsh-TUI does
 not write `~/.codex/config.toml` or log out your native Codex account. A
 provider `env_key` from your own config (e.g. `DEEPSEEK_API_KEY`) that the
 shell did not export is injected from the DSH credential store when the ref
-is stored there — keep the key in the store, no per-shell export needed.
+is stored there — the active store first, then the default `~/.dsh` one — so
+keep the key in the store, no per-shell export needed. When nothing can
+supply it, the session still starts and the reason is reported once as a
+start notice: Codex itself rejects every turn of that provider.
 
 TPS includes hidden reasoning time and excludes tool execution time. Live
 text estimates are corrected when Codex reports output token usage.

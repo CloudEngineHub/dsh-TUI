@@ -95,9 +95,17 @@ type and host, not an email address or key.
 One bridging exception: when the active provider takes its credential from an `env_key`
 (say `DEEPSEEK_API_KEY`) that the launching environment did not export but the DSH credential
 store declares, the stored value is injected into the app-server child after `config/read`
-(the hub is re-acquired; the key joins the hub fingerprint through `injectedEnvKeys`). A key
+(the hub is re-acquired; the key joins the hub fingerprint through `injectedEnvKeys`). Reads
+take the active store first (`$DSH_HOME/.credentials.yaml`, or `~/.dsh/.credentials.yaml`
+when `DSH_HOME` is unset) and then the default `~/.dsh` store, so a `DSH_HOME` override does
+not orphan a key stored where both READMEs name it; writes only ever target the active home. A key
 stored once in the credential store therefore works without exporting a shell variable. The
 value only ever travels into the spawn pipeline, never into logs, notices or events.
+
+When nothing can supply the key, startup is **not** blocked: Codex itself rejects every turn
+of that provider, so the runtime reports the reason once as a start notice (naming the
+provider and the variable, never a value) — export the key, store it, or move the provider to
+a channel.
 
 ### The three `/login` methods
 
