@@ -140,6 +140,13 @@ function verifyOverlay() {
 
 function makeStreams(columns) {
   const terminal = new Terminal({ cols: columns, rows: 30, allowProposedApi: true })
+  let cursorVisible = true
+  for (const [final, next] of [['h', true], ['l', false]]) {
+    terminal.parser.registerCsiHandler({ prefix: '?', final }, params => {
+      if (params.includes(25)) cursorVisible = next
+      return false
+    })
+  }
   let painted = Promise.resolve()
   const stdout = new Writable({
     write(chunk, _enc, cb) {
@@ -160,7 +167,7 @@ function makeStreams(columns) {
   stdin.setEncoding = () => stdin
   stdin.ref = () => stdin
   stdin.unref = () => stdin
-  return { stdout, stderr, stdin, terminal, flush: () => painted }
+  return { stdout, stderr, stdin, terminal, flush: () => painted, cursorVisible: () => cursorVisible }
 }
 
 function CopyOnSelectMount() {
@@ -186,7 +193,7 @@ function InputConsumer() {
 
 async function run(columns, fullscreen) {
   console.log(`\n${fullscreen ? 'fullscreen' : 'inline'} ${columns} columns`)
-  const { stdout, stderr, stdin, terminal, flush } = makeStreams(columns)
+  const { stdout, stderr, stdin, terminal, flush, cursorVisible } = makeStreams(columns)
   const previousInk = instances.get(process.stdout)
   const tree = React.createElement(
     fullscreen ? AlternateScreen : React.Fragment,
@@ -273,6 +280,7 @@ async function run(columns, fullscreen) {
   const highlightedColumns = row => Array.from({ length: columns }, (_, col) => col)
     .filter(col => terminal.buffer.active.getLine(row)?.getCell(col)?.isInverse())
   check('retained highlight is visible in the terminal', JSON.stringify(highlightedColumns(1)) === JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9]))
+  check('automatic copy retains the visible cursor at the text edge', cursorVisible() && terminal.buffer.active.cursorX === 9 && terminal.buffer.active.cursorY === 1)
 
   const copyCount = () => stdout.frames.join('').match(/\x1b\]52;c;/g)?.length ?? 0
   const beforeRepaint = copyCount()
@@ -289,6 +297,8 @@ async function run(columns, fullscreen) {
   check('repeated release does not copy again', copyCount() === copiesBeforeRepeat)
   stdin.write('\x1b')
   check('Esc clears the retained selection', await settled(() => ink?.hasTextSelection() === false))
+  await flush()
+  check('Esc releases the cursor when no editor is focused', !cursorVisible())
   check('clearing a retained selection does not copy again', copyCount() === copiesBeforeRepeat)
   // A new gesture selecting the same bytes must still copy.
   stdin.write('\x1b[<0;2;2M')

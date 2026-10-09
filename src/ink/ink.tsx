@@ -1105,10 +1105,10 @@ export default class Ink {
     // Main-screen coordinates include scrollback and the trailing cursor
     // row. Do not expose a caret that is clipped or scrolled out of view.
     const viewportTop = this.altScreenActive ? 0 : Math.max(0, frame.cursor.y - terminalRows + 1);
-    // A fullscreen text drag temporarily owns the native cursor. Leave the
-    // editor declaration intact so release, cancellation and recovery return
-    // to its latest caret without requiring another React commit.
-    const selectionFocus = this.altScreenActive && this.selection.isDragging ? getSelectionCursor(frame.screen, this.selection) : null;
+    // A fullscreen text selection owns the native cursor until cleared.
+    // Leave the editor declaration intact so clearing restores its latest
+    // caret without requiring another React commit.
+    const selectionFocus = this.altScreenActive && hasSelection(this.selection) ? getSelectionCursor(frame.screen, this.selection) : null;
     const selectionTarget = selectionFocus !== null ? {
       x: Math.min(Math.max(selectionFocus.col, 0), terminalWidth - 1),
       y: Math.min(Math.max(selectionFocus.row, 0), terminalRows - 1)
