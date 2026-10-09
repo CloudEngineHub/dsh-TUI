@@ -12,7 +12,11 @@
  *      the preference (including ones the official /permission command
  *      appended on its own), in-plan switches do not, a fresh session is
  *      seeded with the remembered preset through the service write path,
- *      and the DSH_PERMISSION_MODE deployment pin outranks the file.
+ *      a session whose only plane events ARE the composition's own creation
+ *      pin (dsh-permission-presets `session/created` → pinInitialPermission)
+ *      still seeds, a session that ran a turn or switched to another
+ *      identity does not, and the DSH_PERMISSION_MODE launch pin outranks
+ *      the file.
  *
  * Runs against the compiled channel (imports ../lib/types/…). Run after
  * pnpm build: node scripts/verify-permission-prefs.mjs
@@ -180,12 +184,16 @@ const clearPref = () => { try { unlinkSync(prefFile()) } catch { /* absent */ } 
 }
 
 // ---- C. channel-level persistence, seeding, and the deployment pin --------
-const makeEnv = ({ history = [], withCommand = false, settings, options } = {}) => {
+const makeEnv = ({ history = [], withCommand = false, settings, options, defaultPreset = 'workspace-write' } = {}) => {
   const commands = []
   const warnings = []
   const handlers = new Map()
   const events = [...history]
   const registry = {
+    // The composition default dsh-permission-presets pins into every fresh
+    // session (mirrors the service's `defaultPreset` getter); undefined models
+    // a service that does not answer it at all (null = omit the getter).
+    ...(defaultPreset === null ? {} : { defaultPreset }),
     names: ['read-only', 'workspace-write', 'auto', 'safe'],
     entries: new Map([
       ['read-only', { value: 'read-only', name: 'Read only' }],
@@ -319,6 +327,88 @@ const AUTO_SEED = [
   await settle()
   const untouched = !env.events.some(event => event.type === 'permission/preset')
   check('seed: a session with its own plane events is left alone', untouched)
+}
+
+// The composition writes permission/preset + sandbox/mode + approval/policy
+// into EVERY fresh session at creation (`session/created` →
+// pinInitialPermission), so holding those events is not a user choice: a
+// still-untouched session must seed, or the remembered pick could never apply.
+{
+  clearPref()
+  writePermissionPref('safe')
+  const env = makeEnv({
+    history: [
+      { type: 'permission/preset', data: { preset: 'workspace-write' } },
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+    ],
+  })
+  createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  check(
+    'seed: the composition creation pin does not block the remembered preset',
+    env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'safe'),
+    JSON.stringify(env.events.map(event => event.type)),
+  )
+}
+
+{
+  clearPref()
+  writePermissionPref('safe')
+  const env = makeEnv({
+    history: [
+      { type: 'permission/preset', data: { preset: 'workspace-write' } },
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+      { type: 'turn/start', data: {} },
+    ],
+  })
+  createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  check(
+    'seed: a session that ran a turn keeps its own planes',
+    !env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'safe'),
+  )
+}
+
+{
+  clearPref()
+  writePermissionPref('auto')
+  const env = makeEnv({
+    history: [
+      { type: 'permission/preset', data: { preset: 'safe' } },
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+    ],
+  })
+  createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  check(
+    'seed: an identity the composition did not pin is a user choice',
+    !env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'auto'),
+  )
+}
+
+// Fail-closed: without the composition default the pin cannot be recognized,
+// so plane events count as a user choice again — the guard must not turn an
+// unknown default into a seed.
+{
+  clearPref()
+  writePermissionPref('safe')
+  const env = makeEnv({
+    defaultPreset: null,
+    history: [
+      { type: 'permission/preset', data: { preset: 'workspace-write' } },
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+    ],
+  })
+  createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  check(
+    'seed: an unknown composition default fails closed (no seed)',
+    !env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'safe'),
+  )
 }
 
 {

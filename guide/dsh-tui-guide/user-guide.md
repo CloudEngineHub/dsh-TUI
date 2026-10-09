@@ -439,7 +439,8 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 ### 4.6 模型切换与预设
 
 - `/model`：选择器。**切换 = fork 会话续聊**（历史保留、仅换路由，旧会话留在 `/resume`）；
-  持久化 `~/.dsh-tui/model.json`。
+  持久化 `~/.dsh-tui/model.json`，下次启动直接沿用它（cordis.yml/profile 中的
+  `provider`/`model` 只是首次启动的部署默认值）。
 - 回合运行中切换会被拒绝。
 - `/preset` 可选：`standard`（默认全功能）、`ptc`、`minimal`（内核「极简模式」：只暴露一个持久 shell 工具，无 compaction、无计划模式；也因此没有压缩、工具结果不剪枝——长会话可能撞上下文上限，`/compact` 与问卷不可用，Help 与 `/` 补全会标注，进入该预设时提示一次）、
   `cordis`、`liangshen`（梁神模式）。
@@ -573,8 +574,8 @@ dsh-tui 自身区块在 0.1.7 写入当前 profile 的 `cordis.patch.yml`，旧�
 | expandEditor | 全屏草稿编辑（默认开）：输入行尾 `⛶` 或 `Ctrl+Shift+E` 展开成整屏编辑器；`Ctrl+Enter` 发送、`Esc` 收起（草稿还在）；关掉后入口不显示 |
 | statusBar.* | 上表全部状态栏开关（compact/model/thinking/cwd/contextUsage/cache/tokens/cost/tps/gitBranch/sessionTitle/sessionId/mode/contextBar/activity/trajectory；statusBar.sessionId 是底栏显示开关，与 cordis 的启动 sessionId 无关） |
 
-**effortDefault**：模型没有该档时自动就近降级并弹提示；优先级 settings 用户层 > cordis `effort` >
-上次 `/effort`（effort.json）> 模型默认。
+**effortDefault**：模型没有该档时自动就近降级并弹提示；优先级 settings 用户层 > 上次 `/effort`
+（effort.json，即上次实际运行的档位）> cordis `effort`（部署默认值）> 模型默认。
 
 **scrollGutter**：scrollbar 轨道可直接拖；`Shift`/`Alt`/`Ctrl`+拖动仍是文字选择。
 
@@ -620,8 +621,8 @@ dsh 意外退出时，安全模式给出**只读**的环境诊断、profile 插�
 
 | 项 | 命令 | 说明 |
 |---|---|---|
-| 模型 | `/model` | 选择器；**切换 = fork 会话续聊**（历史保留、仅换路由）；持久化 `~/.dsh-tui/model.json`，重启与 `/new` 沿用。从没选过的话，用内置默认模型（当前为 `deepseek-flash`） |
-| 推理强度 | `/effort` | 滑杆（←/→ 实时）或 `/effort <id>`；`/effort status` 看当前；新会话默认档在 /settings → 默认推理强度 |
+| 模型 | `/model` | 选择器；**切换 = fork 会话续聊**（历史保留、仅换路由）；持久化 `~/.dsh-tui/model.json`，重启与 `/new` 沿用——它**优先于** cordis.yml/profile 里写的 `provider`/`model`（后者只是首次启动的部署默认值）。从没选过的话，用配置值，再没有才用 Harness 默认（当前为 `deepseek-flash`） |
+| 推理强度 | `/effort` | 滑杆（←/→ 实时）或 `/effort <id>`；`/effort status` 看当前；持久化 `~/.dsh-tui/effort.json` 并被下一次启动沿用（优先于 cordis.yml 的 `effort`），新会话默认档在 /settings → 默认推理强度 |
 | Agent 预设 | `/preset` | `standard` / `ptc`（旧 0.1.1 名 `code`）/ `minimal` / `cordis` / **梁神模式 `liangshen`**；**已开始会话不可切换** |
 | 主题 | `/theme` | `auto`（OSC 11 跟随终端背景）/ `light` / `dark` / `dark-ansi`；`/theme <名>` 直接切；`/theme status` 看解析结果 |
 | 自定义主题 | 手动 | `~/.dsh-tui/themes/<名>.json`，`{base, colors}` 格式，选中即热切换；命名为 `auto` 会被内置遮蔽 |
