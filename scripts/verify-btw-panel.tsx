@@ -24,7 +24,7 @@ const fixtureHome = mkdtempSync(join(tmpdir(), 'verify-btw-panel-'))
 process.env.HOME = fixtureHome
 process.env.USERPROFILE = fixtureHome
 
-const [React, { Terminal: XTerm }, ui, { SidePanelLayout }, { SidePanelColumn }, { useSidePanel }, prefs, { setLang, t }, { QuestionStore }, { LOCAL_COMMANDS }, { Chat }, { btwThreads }, { BtwThreadScene }, { BtwPanelFallback }, { panelStore }] = await Promise.all([
+const [React, { Terminal: XTerm }, ui, { SidePanelLayout }, { SidePanelColumn }, { useSidePanel }, prefs, { setLang, t }, { QuestionStore }, { LOCAL_COMMANDS }, { Chat }, { btwThreads }, { BtwThreadScene }, { BtwPanelFallback }, { panelStore }, { btwComposerKey }] = await Promise.all([
   import('react'),
   import('@xterm/headless'),
   import('../src/ui.js'),
@@ -40,6 +40,7 @@ const [React, { Terminal: XTerm }, ui, { SidePanelLayout }, { SidePanelColumn },
   import('../src/components/sidePanel/btw/BtwThreadScene.js'),
   import('../src/components/BtwPanel.js'),
   import('../src/components/sidePanel/PanelStore.js'),
+  import('../src/components/sidePanel/btw/BtwComposer.js'),
 ])
 const { render, ThemeProvider, Box, Text, AlternateScreen, useInput, useTerminalSize } = ui
 const { applySidePanelOpen, applySidePanelRatio, applySidePanelPanels } = prefs
@@ -200,7 +201,9 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   const channel = makePanelChannel(ask)
   const frame = await mountPanel(105, 'btw', true, channel)
   const empty = frame.lines().join('\n')
-  check('P1. 空态提示可见（面板 ≈40 列）', empty.includes('还没有侧问'))
+  check('P1. 空态提示可见（面板 ≈40 列）', empty.includes('还没有侧问')
+    && empty.includes('旁路问答') && empty.includes('参考最近'), empty.split('\n').filter(l => l.includes('还没有') || l.includes('旁路') || l.includes('参考')).join(' | '))
+  check('P1b. 输入框有占位提示（Enter/点击聚焦模型可见）', empty.includes('点击或'), empty.split('\n').filter(l => l.includes('›') || l.includes('点击')).join(' | '))
   const r = btwThreads.submit('probe-session', '这是第一个很长很长的问题关于编译器与运行时的边界', channel.ask.ask)
   check('P2a. 直发线程成功', r.ok === true)
   await delay(300)
@@ -212,6 +215,7 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   check('P2b. 问题文本上屏', shown.includes('第一个很长很长的问题'))
   check('P2c. 答案文本上屏（Markdown 渲染无崩溃）', shown.includes('回答完成版'))
   check('P2d. composer 在面板底部可见（› 提示）', shown.includes('›'))
+  if (process.env.BTW_SCREENSHOT) console.log('SCREENSHOT-EMPTY\n' + frame.lines().map(l => l.slice(58)).join('\n'))
   await frame.app.unmount()
 }
 
@@ -280,10 +284,14 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   const ask = scriptedAsk()
   const channel = makePanelChannel(ask)
   const frame = await mountPanel(100, 'btw', true, channel)
-  // composer 默认拿编辑焦点：打字 → 草稿
+  // 新聚焦模型：面板聚焦默认是阅读层（箭头归导航）——打字不落草稿，
+  // Enter（或点击输入框）之后才是编辑。
   await keys(frame, ['追', '问'])
   await delay(150)
-  check('P4a. 面板聚焦即 composer 编辑（打字进草稿）', frame.lines().some(l => l.includes('追问')), frame.lines().filter(l => l.includes('›')).join(' | '))
+  check('P4a0. 默认阅读层：打字不进草稿', (btwThreads.get('probe-session')?.draft ?? '') === '', JSON.stringify(btwThreads.get('probe-session')?.draft))
+  await keys(frame, ['\r', '追', '问'])
+  await delay(150)
+  check('P4a. Enter 聚焦后打字进草稿', frame.lines().some(l => l.includes('追问')), frame.lines().filter(l => l.includes('›')).join(' | '))
   await keys(frame, ['\r'])
   await delay(400)
   check('P4b. Enter 提交走 channel.sideQuestion（一次）', ask.calls.length === 1 && ask.calls[0].question === '追问')
@@ -300,8 +308,12 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   const afterSecondEsc = frame.lines().join('\n')
   check('P5b. 第二层 Esc 交宿主回聊天（提示行换焦点文案）', afterSecondEsc.includes('Ctrl+B 聚焦侧栏'))
   check('P5c. 草稿仍在（store 持久）', btwThreads.get('probe-session')?.draft === '草稿保留')
-  // 列表模式动作：先回右栏（Ctrl+B），再 n 新话题 / s 发送到聊天
-  await keys(frame, [String.fromCharCode(2)])
+  // P5d：列表态 Enter 回编辑层（草稿续写），Esc 再收起——列表动作不受影响。
+  await keys(frame, [String.fromCharCode(2), '\r', 'x'])
+  await delay(150)
+  check('P5d. 列表态 Enter 回编辑层，草稿续写', btwThreads.get('probe-session')?.draft === '草稿保留x', JSON.stringify(btwThreads.get('probe-session')?.draft))
+  await keys(frame, [ESC])
+  // 列表模式动作：n 新话题 / s 发送到聊天
   const r2 = btwThreads.submit('probe-session', 'attach me', ask.ask)
   await delay(200)
   ask.finish('attach answer body')
@@ -314,6 +326,11 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
     JSON.stringify(channel.attachedContexts.map(a => ({ s: a.sourceId, t: a.title }))))
   check('P7b. attach 标题带 /btw 前缀', attached?.title.startsWith('/btw: '))
   check('P7c. 附加成功提示', channel.notices.some(text => text.includes('已附加')))
+  check('P7e. 两轮之间有分隔线', frame.lines().some(l => l.includes('┈┈┈┈')))
+  const noticesBeforeCopy = channel.notices.length
+  await keys(frame, ['c'])
+  await delay(200)
+  check('P7d. c = 复制最新答案（通知字符数）', channel.notices.length === noticesBeforeCopy + 1 && (channel.notices[noticesBeforeCopy] ?? '').includes('已复制'), channel.notices.join(' | '))
   await keys(frame, ['n'])
   await delay(300)
   check('P6. n = 新话题（清线程 + 通知）', btwThreads.get('probe-session')?.turns.length === 0
@@ -326,6 +343,9 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   const ask = scriptedAsk()
   const channel = makePanelChannel(ask)
   const frame = await mountPanel(100, 'btw', true, channel)
+  // 默认阅读层：先 Enter 进编辑层再连按（两键之间不等重渲染）。
+  frame.stdin.write('\r')
+  await new Promise(resolve => setImmediate(resolve))
   for (const ch of ['x', 'y', 'z']) {
     frame.stdin.write(ch)
     await new Promise(resolve => setImmediate(resolve))
@@ -336,6 +356,15 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   await delay(150)
   check('P9b. 退格整删一个 emoji（不留半个代理对）', btwThreads.get('probe-session')?.draft === 'xyz', JSON.stringify(btwThreads.get('probe-session')?.draft))
   await frame.app.unmount()
+}
+
+// ── P9c: 编辑层的 Shift+←/→ 让位宿主（编辑中也能一键切面板）─────────
+{
+  const shiftLeft = btwComposerKey({ text: 'ab', caret: 1 }, '', { leftArrow: true, shift: true } as never)
+  const plainLeft = btwComposerKey({ text: 'ab', caret: 1 }, '', { leftArrow: true } as never)
+  check('P9c. Shift+←/→ 未消费（落宿主切面板）、纯 ←/→ 仍移光标',
+    shiftLeft === null && plainLeft?.state?.caret === 0,
+    JSON.stringify({ shiftLeft, plainLeft }))
 }
 
 // ── F1: 全屏场景 Esc 退出编辑、Tab 回到 composer ─────────────────────────
