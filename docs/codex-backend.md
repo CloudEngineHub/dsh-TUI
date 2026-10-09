@@ -75,6 +75,15 @@ thread 时，恢复保留原来的错误，不会启动后台服务或另开新�
 路由应使用自己的 provider 凭据或渠道 key。读取账户状态只显示凭据来源、订阅类型
 与主机，不显示邮箱或 key。
 
+一个桥接例外：当前 provider 用 `env_key`（如 `DEEPSEEK_API_KEY`）取凭据、启动环境没导出、
+而 DSH 凭据库声明了该 ref 时，`config/read` 之后把库里的值注入 app-server 子进程（重取 hub，
+key 记入 `injectedEnvKeys` 参与指纹）。读取先看活动 home 的库，再回退默认 `~/.dsh` 的库，
+所以 `DSH_HOME` 覆盖不会让写在文档位置的 key 失联；写入只进活动 home。key 只走 spawn 管道，
+不进日志、提示或事件。
+
+两边都拿不到时不拦启动：Codex 自己会拒绝该 provider 的每个回合，运行时只在启动时报一次
+原因（点名 provider 与变量名，不含值）——导出该变量、写入凭据库，或把 provider 换成渠道。
+
 ### `/login` 的三种方式
 
 | 方式 | 用途与存储 |

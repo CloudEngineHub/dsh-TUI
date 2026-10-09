@@ -253,7 +253,13 @@ export function spawnTransport(options: TransportOptions): Transport
   `DEEPSEEK_API_KEY`）若未随启动环境导出、但 DSH 凭据库（`$DSH_HOME/.credentials.yaml`，经
   `BackendHost.tokenStore` 同一文件视图）声明了该 ref，则在 `config/read` 后把值注入子进程环境并
   重取 hub——存储的 key 无需 shell 导出即可用。key 记入 `injectedEnvKeys` 参与 hub 指纹，无 key 的
-  hub 不会被需要 key 的会话复用；值只进 spawn 管道，不进日志/提示/事件。
+  hub 不会被需要 key 的会话复用；值只进 spawn 管道，不进日志/提示/事件。两边都拿不到时**不拦启动**：
+  拒绝发生在 Codex 自己的每个回合，运行时只把原因作为 start notice 报一次（点名 provider 与变量名，
+  不含值），用户可导出变量、写入凭据库或改用渠道。
+- 凭据库读取顺序（`utils/credentials.ts`、`backends/shared/channel-tokens.ts`）：先活动 home 的
+  `.credentials.yaml`（`$DSH_HOME`，未设置时为 `~/.dsh`），再回退默认 `~/.dsh/.credentials.yaml`——
+  `DSH_HOME` 覆盖不再让写在文档位置（README 与 `/doctor` 都点名 `~/.dsh`）的 key 失联。**写只进活动
+  home**，回退只影响读；启动器 `bin/dsh-tui.js` 的 doctor 镜像同一顺序，两处不许分叉。
 
 ### 5.2 `rpc/client.ts`
 

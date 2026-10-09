@@ -202,7 +202,9 @@ thread；这不是把历史导入 DSH 的 `migrate codex`。
 ChatGPT OAuth、设备码或 API key（后者写入 Codex 自己的凭据存储）。`/channel` 连接
 优先，托管订阅令牌只在第一方路由注入；不写 `~/.codex/config.toml`，不退出原生登录。
 自己 config.toml 里 provider 声明的 `env_key`（如 `DEEPSEEK_API_KEY`）若未在 shell
-导出、但 DSH 凭据库存有该 ref，会自动注入子进程——key 存进凭据库即可，无需每次导出。
+导出、但 DSH 凭据库存有该 ref，会自动注入子进程——先查活动 home 的库，再回退默认
+`~/.dsh` 的库，key 存进凭据库即可，无需每次导出。两边都拿不到时**不拦启动**：拒绝
+发生在 Codex 自己的每个回合，dsh-TUI 只在启动时把原因报一次。
 
 TPS 计入隐藏推理的生成时间，剔除工具执行时间；实时文本估算在 Codex 报告实际
 输出 token 用量后校正。

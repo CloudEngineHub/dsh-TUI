@@ -507,6 +507,7 @@ const dict = {
   'codex-channel-store-unavailable': { zh: '宿主未提供渠道令牌库，无法保存令牌', en: 'The host did not provide a channel token store; the token cannot be saved' },
   'codex-channel-token-write-failed': { zh: '渠道令牌保存失败，连接未更新', en: 'The channel token could not be saved; the connection was not updated' },
   'codex-auth-login-needed': { zh: 'Codex 需要凭据：用 /login 登录', en: 'Codex needs credentials: sign in with /login' },
+  'codex-provider-env-key-missing': { zh: 'provider {{provider}} 缺 {{env}}：Codex 会拒绝每个回合；导出它或写进 ~/.dsh/.credentials.yaml', en: 'Provider {{provider}} is missing {{env}}: Codex rejects every turn. Export it or store it in ~/.dsh/.credentials.yaml' },
   'codex-auth-refresh-failed': { zh: 'ChatGPT 订阅令牌刷新失败，已停止注入；用 /login 重新登录，或使用自己的 Codex 登录', en: 'The ChatGPT subscription token refresh failed; injection stopped. Use /login again or your own Codex login' },
   'codex-auth-login-failed': { zh: 'Codex 登录未完成，已停止托管令牌注入；请用 /login 重试', en: 'Codex login did not complete; managed token injection stopped. Retry with /login' },
   'codex-auth-claims-missing': { zh: '内置 OAuth 令牌缺少 ChatGPT 账户信息，未注入；请用 /login 重新登录', en: 'The built-in OAuth token has no ChatGPT account identity and was not injected; sign in again with /login' },
