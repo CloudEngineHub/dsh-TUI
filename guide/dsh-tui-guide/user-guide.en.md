@@ -376,7 +376,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 |---|---|---|
 | `/channel` | none | relay channel profiles (Claude backend only); **import / add / manage and any switch that needs a process restart are refused while a turn runs** (the picker itself still opens), see [Interaction](interaction.en.md#channel-profiles-channel-claude-only) |
 | `/model` | none | model selector; **switching = fork the session** (history kept, only routing changes; a session nobody has typed into records no branch, keeping automatic titles for its first prompt), choice persisted to `~/.dsh-tui/model.json` |
-| `/effort` | `status` / `<id>` | reasoning effort: no-arg slider (`←/→` adjust); `status` current level; `<id>` set directly. Persisted to `~/.dsh-tui/effort.json`; new-session start level follows /settings `effortDefault` (§5.3) |
+| `/effort` | `status` / `<id>` | reasoning effort: no-arg slider (`←/→` adjust); `status` current level; `<id>` set directly. Persisted to `~/.dsh-tui/effort.json` and reused by the next launch (it outranks the cordis.yml `effort` default); new-session start level follows /settings `effortDefault` (§5.3) |
 | `/thinking` | none | extended-thinking display toggle (thinking expands item by item while streaming) |
 | `/tokens` | none | three separate figures, never two different quantities side by side: **this request**'s upload (input + cache read + cache write — the harness's four buckets are disjoint), the **session totals** (uncached input / output / cache read / cache write), and **context occupancy** |
 | `/activity` | `frames <名>` / `status` | working-status animation: no-arg selector, `frames <名>` sets directly (includes `random`), default `moon8`. Persisted to `~/.dsh-tui/working-activity.json` |
@@ -475,7 +475,8 @@ Full-screen view of the whole session timeline (doesn't pollute scrollback); key
 ### 4.6 Model switching and presets
 
 - `/model`: selector. **Switching = fork the session** (history kept, only routing changes, the old session stays in `/resume`);
-  persisted to `~/.dsh-tui/model.json`.
+  persisted to `~/.dsh-tui/model.json` and reused by the next launch (a `provider`/`model`
+  pair in cordis.yml/profile is only the first-run deployment default).
 - Switching is rejected mid-turn.
 - `/preset` options: `standard` (default full features), `ptc`, `minimal` (the kernel's Minimal preset: one persistent-shell tool only, no compaction, no plan mode — and therefore no compaction and no tool-result pruning, so a long session can hit the context limit and `/compact` plus questions are unavailable; Help and `/` completion mark the command, and entering the preset says so once),
   `cordis`, `liangshen` (Liangshen mode).
@@ -621,8 +622,8 @@ Common items below, full list on the /settings screen. Most topics (**Appearance
 | expandEditor | full-screen draft editor (default on): `⛶` at the input line end or `Ctrl+Shift+E` expands to a full-screen editor; `Ctrl+Enter` send, `Esc` collapse (draft kept); off hides both entries |
 | statusBar.* | all status-bar toggles above (compact/model/thinking/cwd/contextUsage/cache/tokens/cost/tps/gitBranch/sessionTitle/sessionId/mode/contextBar/activity/trajectory; statusBar.sessionId is the bottom-bar display toggle, unrelated to cordis startup sessionId) |
 
-**effortDefault**: when the model lacks that level, drop one level and show a notice; priority settings user layer > cordis `effort` >
-last `/effort` (effort.json) > model default.
+**effortDefault**: when the model lacks that level, drop one level and show a notice; priority settings user layer > the last `/effort`
+(effort.json, the level the last session ran) > cordis `effort` (deployment default) > model default.
 
 **scrollGutter**: the scrollbar track can be dragged directly; `Shift`/`Alt`/`Ctrl`+drag is still text selection.
 
@@ -669,7 +670,7 @@ When dsh exits unexpectedly, safe mode gives a **read-only** environment diagnos
 
 | Item | Command | Notes |
 |---|---|---|
-| Model | `/model` | selector; **switching = fork the session** (history kept, routing only); persisted to `~/.dsh-tui/model.json`, reused on restart and `/new`. Never chosen → built-in default (currently `deepseek-flash`) |
+| Model | `/model` | selector; **switching = fork the session** (history kept, routing only); persisted to `~/.dsh-tui/model.json` and reused on restart and `/new` — it OUTRANKS a `provider`/`model` pair written in cordis.yml/profile (that pair is only the first-run deployment default). Never chosen → the configured pair, else the harness default (currently `deepseek-flash`) |
 | Reasoning effort | `/effort` | slider (`←/→` live) or `/effort <id>`; `/effort status` for current; new-session default in /settings → default reasoning effort |
 | Agent preset | `/preset` | `standard` / `ptc` (old 0.1.1 name `code`) / `minimal` / `cordis` / **Liangshen mode `liangshen`**; **can't switch an already-started session** |
 | Theme | `/theme` | `auto` (OSC 11 follows terminal background) / `light` / `dark` / `dark-ansi`; `/theme <名>` direct; `/theme status` for the result |

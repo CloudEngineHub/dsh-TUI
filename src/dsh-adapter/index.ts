@@ -52,12 +52,14 @@ export interface Config {
    *  the branded `KernelBackendId` here breaks published consumers instead
    *  (PR #1380 review R1). */
   backend?: string
-  /** LLM provider route. The route resolves atomically (issue #67): when
-   *  cordis.yml names BOTH `provider` and `model`, that pair wins; otherwise
-   *  the `/model` choice persisted in `~/.dsh-tui/model.json` wins whole;
-   *  otherwise `agentDefaultModel` supplies the provider-neutral Harness
-   *  default. A bare embedder without that service falls back to DeepSeek.
-   *  A provider-only pin never half-overrides the persisted choice. */
+  /** LLM provider route. The route resolves atomically (issue #67): the
+   *  `/model` choice persisted in `~/.dsh-tui/model.json` — the route the
+   *  last session ran — wins whole; otherwise a `provider`+`model` pair named
+   *  here is the deployment DEFAULT; otherwise `agentDefaultModel` supplies
+   *  the provider-neutral Harness default. A bare embedder without that
+   *  service falls back to DeepSeek. A half-pinned pair (only one of the two
+   *  keys) is ignored outright and never half-overrides the persisted
+   *  choice. */
   provider?: string
   /** Model override passed to the agent; resolved together with `provider`
    *  as one atomic route (see `provider`). */
@@ -71,11 +73,13 @@ export interface Config {
   workspace?: string
   /** Reasoning effort applied to every request, validated against the live
    *  route's adapter levels (an unlisted level is ignored and the adapter
-   *  default applies). Wins over the persisted /effort choice; also seeds
-   *  the startup status line until the first request header reports the
-   *  live value. */
+   *  default applies). This is the deployment DEFAULT beneath the persisted
+   *  `/effort` choice (the level the last session ran); it also seeds the
+   *  startup status line until the first request header reports the live
+   *  value. */
   effort?: string
-  /** Settings default for future sessions; overrides the `effort` fallback. */
+  /** Settings user-layer default for future sessions; when set it outranks
+   *  both the persisted `/effort` choice and the `effort` fallback. */
   effortDefault?: string
   /** Show the header whale and its idle animation. */
   whale?: boolean
@@ -118,9 +122,10 @@ export interface Config {
    *  then the `/lang` choice persisted in `~/.dsh-tui/lang.json`, then `zh`. */
   lang?: string
   /** Agent preset id new sessions compose from (standard/ptc/minimal/
-   *  cordis/… when the roster is mounted). When absent, the `/preset` choice
-   *  persisted in `~/.dsh-tui/agent-preset.json` wins, then the roster
-   *  default (`standard`). */
+   *  cordis/… when the roster is mounted). A `DSH_TUI_PRESET` launch
+   *  instruction outranks everything; otherwise the `/preset` choice
+   *  persisted in `~/.dsh-tui/agent-preset.json` wins, then this value as
+   *  the deployment default, then the roster default (`standard`). */
   preset?: string
   /** Edit/Write diff presentation: `auto` picks side-by-side on wide
    *  terminals (≥110 cols) and unified below; `split`/`unified` force one

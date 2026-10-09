@@ -3,7 +3,7 @@ import { t, getLang, setLang, isLang, writeLangPref, readLangPref, subscribeLang
 import { checkForTuiUpdate, installedTuiVersion } from '../update.js'
 import { installedKernelVersion } from '../dsh-adapter/contract.js'
 import { readThemePref } from '../themePrefs.js'
-import { readPresetPref } from '../presetPrefs.js'
+import { presetOverrideFromEnv, readPresetPref } from '../presetPrefs.js'
 import { readModelPref } from '../modelPrefs.js'
 import { readActivityFrames } from '../activityPrefs.js'
 import { envThemeOverride } from '../components/design-system/ThemeProvider.js'
@@ -3648,13 +3648,9 @@ export function Chat({
           currentLang: getLang(),
           langOverriddenBySettings: tuiNamespace !== undefined && hasPath(tuiNamespace.user, ['lang']),
           configuredLang: channel.configuredLang,
-          configuredPreset: channel.configuredPreset,
+          envPreset: presetOverrideFromEnv(),
           presetPref: readPresetPref(),
           currentPreset: channel.agentPreset,
-          configuredModel: {
-            provider: channel.configuredProvider,
-            model: channel.configuredModel,
-          },
           modelPref: readModelPref(),
           currentModel: { provider: channel.provider, model: channel.model },
           configuredActivity: channel.configuredActivityFrames,

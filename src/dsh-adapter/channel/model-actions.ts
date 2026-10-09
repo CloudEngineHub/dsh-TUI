@@ -44,7 +44,7 @@ export function createModelActions(
       listModels(provider: string): Promise<readonly LlmModelInfo[]>
     }
     | undefined
-  let preferredEffort: string | undefined = deps.initialEffort ?? readEffortPref()
+  let preferredEffort: string | undefined = readEffortPref() ?? deps.initialEffort
   // Last fallback notice shown for a (preferred → applied) pair: bind fires on
   // every session switch, so an unchanged downgrade must not re-toast.
   let lastEffortFallbackNotice: { preferred: string; applied: string | undefined } | undefined
@@ -236,10 +236,11 @@ export function createModelActions(
   }
   /**
    * Re-seat the future-sessions default reasoning effort. `id` is the settings
-   * user layer (the settings user layer outranks the cordis.yml `effort` pin);
-   * an absent level re-derives the boot chain (cordis `effort` → the persisted
-   * /effort choice). Also re-pins the live agent when its route offers the
-   * level, so the change lands on the next request. No-op when unchanged.
+   * user layer (an explicit value there outranks the persisted `/effort`
+   * choice); an absent level re-derives the boot chain (the persisted
+   * `/effort` choice → the cordis.yml `effort` deployment default). Also
+   * re-pins the live agent when its route offers the level, so the change
+   * lands on the next request. No-op when unchanged.
    */
   const setDefaultEffort = (id: string | undefined): void => {
     const resolved = resolveEffortDefault(id, deps.initialEffort, readEffortPref())

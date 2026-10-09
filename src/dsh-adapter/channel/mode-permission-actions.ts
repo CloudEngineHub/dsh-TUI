@@ -287,16 +287,37 @@ export function createPermissionModeActions(
     })
   }
 
+  /** The composition's default preset: the identity `dsh-permission-presets`
+   *  pins into EVERY fresh session before it is published (`session/created` →
+   *  `pinInitialPermission`), read fail-closed from the mounted service —
+   *  undefined when it is absent or answers nothing usable. */
+  const compositionDefaultPreset = (): string | undefined => {
+    try {
+      const service = ctx.get('permissionPresets') as { defaultPreset?: unknown } | undefined
+      const value = service?.defaultPreset
+      return typeof value === 'string' && value !== '' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   /** Seed a session that never customized its permission planes with the
    *  persisted preference (permissionPrefs.ts): the last preset the user
    *  switched to, applied through the same official /permission path every
-   *  manual switch takes. Idempotent by construction — once any
-   *  permission/sandbox/approval event exists in the log, the session owns
-   *  its planes and is left alone. Never rejects.
+   *  manual switch takes. Never rejects.
    *
-   *  Yields to a DSH_PERMISSION_MODE deployment pin (the composition's
-   *  sandbox-policy/approval defaults came from it) and to shadow
-   *  runtimes, which must not write durable session policy. */
+   *  Holding permission-plane events is NOT evidence of a user choice: the
+   *  composition pins `permission/preset` + `sandbox/mode` + `approval/policy`
+   *  into every fresh session at creation. So a session only owns its planes
+   *  when the log shows more than that pin — it ran a turn, or its durable
+   *  identity is one the composition did not pin (`custom`, a preset a user
+   *  switched to, a resumed log's own state). Everything else is untouched
+   *  and seeds, which is what "starts where the last session ended" means.
+   *
+   *  Yields to a DSH_PERMISSION_MODE launch pin (the composition's
+   *  sandbox-policy/approval defaults came from it, so that invocation
+   *  explicitly asked for that start state) and to shadow runtimes, which
+   *  must not write durable session policy. */
   const applyRememberedPermission = async (): Promise<void> => {
     try {
       if (deps.runtime.mode === 'passive-shadow' || deps.runtime.mode === 'replay-shadow') return
@@ -307,12 +328,20 @@ export function createPermissionModeActions(
       const agent = binding.agent
       const session = agent.session
       if (permissionPrefSeeded.has(session)) return
-      // A session that already holds any permission-plane event chose its
-      // own state (or was resumed with one); only untouched planes seed.
-      for (const event of snapshotLiveSessionEvents(session)) {
+      const events = snapshotLiveSessionEvents(session)
+      const pinnedIdentity = compositionDefaultPreset()
+      let touchesPlanes = false
+      for (const event of events) {
         const known = (event as { type: string }).type
-        if (known === 'permission/preset' || known === 'sandbox/mode' || known === 'approval/policy') return
+        if (known === 'permission/preset' || known === 'sandbox/mode' || known === 'approval/policy') {
+          touchesPlanes = true
+        } else if (known === 'turn/start') {
+          // The session has been used: its planes are the ones it ran with,
+          // never this boot's preference.
+          return
+        }
       }
+      if (touchesPlanes && (pinnedIdentity === undefined || foldPermissionPreset(events) !== pinnedIdentity)) return
       // Fail closed against the mounted roster: an identity this
       // deployment does not offer must not be driven through /permission
       // (it would surface as a boot-time switch failure).

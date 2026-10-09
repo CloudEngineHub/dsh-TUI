@@ -55,11 +55,11 @@ Config；旧版仍使用 `~/.dsh/settings.yaml`。不要把旧文件路径当成
 | 字段 | 默认/来源 | 说明 |
 | --- | --- | --- |
 | `provider` | Harness `agentDefaultModel`；裸组合回落 `deepseek-official` | DSH 模型路由名称；只有 provider 与 model 同时配置才构成显式路由 |
-| `model` | Harness `agentDefaultModel`；裸组合回落 `deepseek-flash` | 启动模型；`/model` 可通过 session fork 实时切换 |
+| `model` | Harness `agentDefaultModel`；裸组合回落 `deepseek-flash` | 启动模型；`/model` 可通过 session fork 实时切换。优先级：`/model` 持久化选择（`~/.dsh-tui/model.json`，上次实际运行的路由，完整 pair）> 此处的完整 `provider`+`model` 对（部署默认值）> Harness 默认。半 pin（只有 `provider` 或只有 `model`）视为未设置，绝不与偏好拼成半个路由（issue #67） |
 | `cwd` | 启动目录所在的 git worktree 根（不在任何 worktree 内时为 `process.cwd()`；家目录的 dotfiles 仓不算） | TUI 会话侧工作区：agent meta、`@` 补全/提及展开、/resume 过滤、状态栏；恢复已有会话时以该会话持久化的 cwd 为准。注意 bash/fs-policy/sandbox 的根仍由组合层 cordis 配置决定（默认启动目录，归 dsh-base 管），与这里的会话侧 cwd 可能不同 |
 | `workspace` | 未设置 | 启动工作区目标；可用本地路径、`file://` URI 或插件提供的 URI，设置后优先于 `cwd` |
-| `effort` | 配置层通常为 `max` | 每个请求实际生效的推理等级（按运行时模型档位校验，非法档位静默回落默认；兼作顶栏启动显示）。优先级：/settings 的 `effortDefault`（`auto` 时让位）> 本字段 > `/effort` 持久化选择（`~/.dsh-tui/effort.json`）> 模型默认 |
-| `effortDefault` | 未设置 | 新会话默认推理强度；`auto` 让位给 `effort`，可经 `/settings` 修改 |
+| `effort` | 配置层通常为 `max` | 每个请求实际生效的推理等级（按运行时模型档位校验，非法档位静默回落默认；兼作顶栏启动显示）。优先级：/settings 的 `effortDefault`（`auto` 时让位）> `/effort` 持久化选择（`~/.dsh-tui/effort.json`，上次实际运行的档位）> 本字段（部署默认值）> 模型默认 |
+| `effortDefault` | 未设置 | 新会话默认推理强度（`/settings` 用户层，显式设定时优先于持久化 `/effort`）；`auto` 让位给持久化选择与 `effort`，可经 `/settings` 修改 |
 | `whale` / `whaleIdle` | `true` / `true` | 标题鲸鱼与欢迎页鲸鱼闲置动画 |
 | `splashFont` | `daily` | 开屏大字字体：`daily` 按本地日期轮换（默认），其余取字体 id（`bold` / `square` / `bevel` / `wide` / `dot` / `stencil` / `classic` / `slab`）pin 住那一款；非法值回落 `daily`。也可经 `/settings` 修改 |
 | `whaleGirl` | `false` | 把标题的像素鲸鱼换成女仆娘：**最优先**真图（Kitty/Sixel）；不支持时回落字符画版女仆娘 |
@@ -80,7 +80,7 @@ Config；旧版仍使用 `~/.dsh/settings.yaml`。不要把旧文件路径当成
 | `contextBar` | `true` | 输入框下方的分段上下文进度条；`false` 隐藏该行。与 `/settings → statusBar.contextBar`（默认开）同时为开才显示 |
 | `fullscreen` | `true`（0.9.0 起出厂默认） | `true` 使用 alternate screen、应用内滚动和鼠标选区；`false` 使用 inline 模式 |
 | `terminalImages` | `true` | 允许在支持的终端预览图片；`false` 保留文字信息，跳过图片探测与预览解码。修改后重启生效 |
-| `preset` | 名册默认 `standard` | 新会话 Agent preset；显式配置优先于持久化偏好 |
+| `preset` | 名册默认 `standard` | 新会话 Agent preset；优先级：`DSH_TUI_PRESET`（本次运行）> `/preset` 持久化选择 > 本字段（部署默认值）> 名册默认 |
 | `sessionId` | 未设置 | 要恢复的会话 ID，通常由 Windows `--resume` 启动器注入 |
 | `backend` | 未设置（`/kernel` 记住的选择，否则 `dsh`） | 会话后端：内置 `dsh`，或已装的后端（实验性的 `claude` / `codex`，以及插件后端；不区分大小写）。**未安装或未知的取值一律按 `dsh` 启动并告警**，不会崩。profile 行读取 `DSH_TUI_BACKEND`，`dsh-tui --backend <id>` 会设置它。见 [Claude 后端](claude-backend.md) |
 
@@ -161,8 +161,8 @@ Config；旧版仍使用 `~/.dsh/settings.yaml`。不要把旧文件路径当成
 ### 默认值与优先级
 
 - 默认值保存在 `~/.dsh-tui/agent-preset.json`。
-- 优先级：显式 `config.preset` 或 `DSH_TUI_PRESET` → 持久化偏好 → 名册
-  默认值 `standard`。
+- 优先级：`DSH_TUI_PRESET`（本次运行的显式指令）→ 持久化偏好 → 显式
+  `config.preset`（部署默认值）→ 名册默认值 `standard`。
 - 名册不再提供 `code` 时，旧偏好回退解析为 `ptc`，解析成功后迁移；rc 名册
   仍保留真实 `code` id，历史会话日志始终不改写。
 - 恢复旧会话时，以该会话日志记录的 preset 为准，不读取当前默认值覆盖它。
@@ -278,7 +278,7 @@ Profile 模式不再使用旧的 `DSH_TUI_COMPACT_RATIO`、`DSH_TUI_COMPACT_RETA
 | `DSH_TUI_CLAUDE_PERMISSION_MODE` | Claude 后端的起始权限模式（`default`/`acceptEdits`/`plan`/`dontAsk`/`bypassPermissions`），优先于 `/permission` 记住的选择 |
 | `DSH_TUI_WORKSPACE_TARGET` | 启动时解析的工作区路径或 URI，通常由 `dsh-tui <目标>` 设置 |
 | `DSH_TUI_SESSION_ROOT` | 覆盖 JSONL 会话根目录；profile 默认 `$DSH_HOME/sessions`，裸 `cordis.yml` 默认 `~/.dsh-tui/sessions` |
-| `DSH_PERMISSION_MODE` | 非 Windows 平台覆盖 sandbox policy，例如 `workspace-write` 或 `danger-full-access` |
+| `DSH_PERMISSION_MODE` | 非 Windows 平台覆盖 sandbox policy，例如 `workspace-write` 或 `danger-full-access`；作为本次启动的初始权限面，优先于 `/permission` 记住的选择 |
 | `DSH_TUI_WORKSPACE` | Windows `dsh-tui.cmd` 采用的工作目录 |
 | `DSH_TUI_DEBUG` | 启用写往 stderr 的 dsh-tui 调试日志 |
 | `DSH_TUI_RENDER_LOG` | 指定文件路径，记录原始 ANSI 渲染帧用于取证 |
