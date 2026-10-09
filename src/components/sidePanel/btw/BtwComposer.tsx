@@ -7,7 +7,7 @@
  * （useInput）共用；组件本身受控渲染（text 在 store，caret 是各处自己的）。
  */
 import React from 'react'
-import { Box, Text } from '../../../ui.js'
+import { Box, Text, InputCaret } from '../../../ui.js'
 import { t } from '../../../i18n.js'
 import type { SidePanelKeyFlags } from '../types.js'
 import { nextCodePoint, previousCodePoint } from '../../AgentMessageComposer.js'
@@ -76,7 +76,7 @@ export function BtwComposer({
   onActivate,
 }: {
   readonly state: BtwComposerState
-  /** 编辑焦点（决定边框高亮与 caret 反白块的画法）。 */
+  /** 编辑焦点（决定边框高亮与原生光标显示）。 */
   readonly focused: boolean
   /** 线程在途：Enter 不发送，提示稍候。 */
   readonly busy: boolean
@@ -87,6 +87,7 @@ export function BtwComposer({
 }): React.ReactNode {
   const { text, caret } = state
   const shown = Math.min(caret, text.length)
+  const afterCaret = nextCodePoint(text, shown)
   return (
     <Box flexDirection="column" flexShrink={0}>
       {/* 一个真正的输入框：圆角边框 + 聚焦高亮；提示并到框内右缘，不另占行。 */}
@@ -109,8 +110,8 @@ export function BtwComposer({
                   草稿尾部本来也看不见）。 */}
               <Box flexDirection="row" flexShrink={1} minWidth={0}>
                 <Text>{text.slice(0, shown)}</Text>
-                <Text inverse>{text.slice(shown, shown + 1) || ' '}</Text>
-                {text.slice(shown + 1) !== '' ? <Text wrap="truncate">{text.slice(shown + 1)}</Text> : null}
+                <InputCaret>{text.slice(shown, afterCaret) || ' '}</InputCaret>
+                {text.slice(afterCaret) !== '' ? <Text wrap="truncate">{text.slice(afterCaret)}</Text> : null}
               </Box>
               <Box flexGrow={1} flexShrink={0}><Text> </Text></Box>
               <Box flexShrink={0}><Text dimColor> {t('btw-input-hint-edit')}</Text></Box>

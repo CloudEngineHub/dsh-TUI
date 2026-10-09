@@ -1,5 +1,5 @@
 import { useCallback, useContext, useLayoutEffect, useRef } from 'react'
-import CursorDeclarationContext from '../components/CursorDeclarationContext.js'
+import CursorDeclarationContext, { NativeCursorContext } from '../components/CursorDeclarationContext.js'
 import type { DOMElement } from '../dom.js'
 
 /**
@@ -23,15 +23,17 @@ import type { DOMElement } from '../dom.js'
  * explicitly after render.
  * @param options - the declared cursor target: `line` and `column` give the
  *   position relative to the node, `active` controls whether the declaration
- *   is set or cleared.
+ *   is set or cleared. `visible` opts a text input into the native caret;
+ *   focus anchors remain hidden unless accessibility mode is enabled.
  * @returns a ref callback to attach to the Box that contains the input.
  */
 export function useDeclaredCursor(options: {
   line: number
   column: number
   active: boolean
+  visible?: boolean
 }): (element: DOMElement | null) => void {
-  const { line, column, active } = options
+  const { line, column, active, visible = false } = options
   const setCursorDeclaration = useContext(CursorDeclarationContext)
   const nodeRef = useRef<DOMElement | null>(null)
 
@@ -55,7 +57,7 @@ export function useDeclaredCursor(options: {
   useLayoutEffect(() => {
     const node = nodeRef.current
     if (active && node) {
-      setCursorDeclaration({ relativeX: column, relativeY: line, node })
+      setCursorDeclaration({ relativeX: column, relativeY: line, node, visible })
     } else {
       setCursorDeclaration(null, node)
     }
@@ -71,4 +73,9 @@ export function useDeclaredCursor(options: {
   }, [setCursorDeclaration])
 
   return setNode
+}
+
+/** Use a native caret in a TTY renderer, retaining painted carets in snapshots. */
+export function useNativeCursor(): boolean {
+  return useContext(NativeCursorContext)
 }
