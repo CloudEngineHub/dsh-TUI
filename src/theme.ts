@@ -359,8 +359,8 @@ const darkTheme: Theme = {
   cursor: '',
   mascotBody: rgb('#D98A63'), // Warm mascot orange
   inputBackground: rgb('#000000'),
-  userMessageBackground: '', // user turn: no fill, gold bold text only (Kimi style)
-  userMessageBackgroundHover: rgb('#3B5BDB'), // hover/expand: blue block with gold text
+  userMessageBackground: '', // user turn: no fill, bold tinted text only (Kimi style)
+  userMessageBackgroundHover: rgb('#3B5BDB'), // hover/expand: blue block with tinted text
   messageActionsBackground: rgb('#2E333D'),
   selectionBg: rgb('#3B4A66'), // Mist-blue tint on dark
   bashMessageBackgroundColor: rgb('#2C3038'),
@@ -369,7 +369,8 @@ const darkTheme: Theme = {
   rate_limit_empty: rgb('#3C414B'),
   fastMode: rgb('#E09A58'),
   fastModeShimmer: rgb('#EAB478'),
-  userPromptLabel: rgb('#FFDF80'),
+  // 用户消息披 Claude 档陶土红（跨内核轮换：每家内核的用户消息用另一家的招牌色）
+  userPromptLabel: rgb('#D77757'),
   subagentBullet: rgb('#D194AE'),
   subagentDescription: rgb('#E8E6E0'),
   subagentModel: rgb('#8D95A6'),
@@ -431,7 +432,8 @@ const claudeDarkTheme: Theme = {
   inactive: rgb('#B8B2A8'),
   inactiveShimmer: rgb('#D5CFC5'),
   subtle: rgb('#817C74'),
-  userPromptLabel: rgb('#D77757'),
+  // 用户消息披 DeepSeek 档雾蓝（跨内核轮换，见 darkTheme.userPromptLabel）
+  userPromptLabel: rgb('#7DA1DE'),
   fastMode: rgb('#D77757'),
   fastModeShimmer: rgb('#E68A69'),
   chromeYellow: rgb('#DFA25B'),
@@ -539,7 +541,7 @@ const lightTheme: Theme = {
   cursor: '',
   mascotBody: rgb('#D98A63'), // Warm mascot orange
   inputBackground: rgb('#F6F3ED'),
-  userMessageBackground: '', // user turn: no fill in light mode, gold text only
+  userMessageBackground: '', // user turn: no fill in light mode, tinted text only
   userMessageBackgroundHover: rgb('#DCE4FB'), // subtle blue tint on hover/expand
   messageActionsBackground: rgb('#E4D9E5'),
   selectionBg: rgb('#D5DEF2'), // Mist-blue tint on warm white
@@ -549,7 +551,8 @@ const lightTheme: Theme = {
   rate_limit_empty: rgb('#DDD5C7'),
   fastMode: rgb('#D98E4A'),
   fastModeShimmer: rgb('#E2A465'),
-  userPromptLabel: rgb('#A67600'),
+  // 用户消息披 Claude 档深化陶土红（浅底对应档，跨内核轮换）
+  userPromptLabel: rgb('#C96442'),
   subagentBullet: rgb('#C07A93'),
   subagentDescription: rgb('#343945'),
   subagentModel: rgb('#8991A0'),
@@ -610,7 +613,8 @@ const claudePaperTheme: Theme = {
   inactive: rgb('#67625B'),
   inactiveShimmer: rgb('#4E4943'),
   subtle: rgb('#969087'),
-  userPromptLabel: rgb('#C96442'),
+  // 用户消息披 DeepSeek 档主蓝（浅底对应档，跨内核轮换）
+  userPromptLabel: rgb('#3F6CC4'),
   fastMode: rgb('#C96442'),
   fastModeShimmer: rgb('#B85738'),
   chromeYellow: rgb('#B97929'),
@@ -703,7 +707,8 @@ const codexLavenderTheme: Theme = {
   inactive: rgb('#B8B8C4'),
   inactiveShimmer: rgb('#D5D5DE'),
   subtle: rgb('#7D7D8A'),
-  userPromptLabel: rgb('#A69BE8'),
+  // 用户消息披 DeepSeek 档亮金（跨内核轮换：Codex 用户消息用旧 dsh 金）
+  userPromptLabel: rgb('#FFDF80'),
   fastMode: rgb('#A69BE8'),
   fastModeShimmer: rgb('#C5BFEE'),
   chromeYellow: rgb('#D8AE62'),
@@ -793,7 +798,8 @@ const codexPaperTheme: Theme = {
   inactive: rgb('#5F5F6C'),
   inactiveShimmer: rgb('#4E4E58'),
   subtle: rgb('#8D8D98'),
-  userPromptLabel: rgb('#8A7ED9'),
+  // 用户消息披 DeepSeek 档深金（浅底对应档，跨内核轮换）
+  userPromptLabel: rgb('#A67600'),
   fastMode: rgb('#8A7ED9'),
   fastModeShimmer: rgb('#6B5CC8'),
   chromeYellow: rgb('#AF7B2E'),
@@ -920,7 +926,9 @@ const darkAnsiTheme: Theme = {
   rate_limit_empty: 'ansi:white',
   fastMode: 'ansi:redBright',
   fastModeShimmer: 'ansi:redBright',
-  userPromptLabel: 'ansi:yellowBright',
+  // 陶土红的 16 色近似（DSH 用户消息跨内核轮换；与 error/fastMode 同用
+  // redBright，靠粗体和行首 ❯ 区分——ANSI 底盘没有更近的暖橙槽）
+  userPromptLabel: 'ansi:redBright',
   subagentBullet: 'ansi:magentaBright',
   subagentDescription: 'ansi:whiteBright',
   subagentModel: 'ansi:white',
