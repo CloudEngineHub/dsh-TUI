@@ -346,6 +346,25 @@ const latestQuestion = (events: readonly AgentEvent[]): QuestionRequestView => {
   await closeAllCodexHubs()
 }
 
+// A provider env_key the launching shell never exported is resolved from the
+// DSH credential store and injected into a fresh child (the keyless hub is
+// never reused); an exported key needs no second child at all.
+{
+  const fake = createFakeAppServer()
+  fake.on('config/read', () => ({ config: { model_provider: 'deepseek', model_providers: { deepseek: { base_url: 'https://api.deepseek.com/v1', env_key: 'DEEPSEEK_API_KEY' } } } }))
+  fake.on('account/read', () => ({ account: null, requiresOpenaiAuth: false }))
+  const debug: string[] = []
+  const runtime = await prepareCodexRuntime({ kind: 'create', cwd: SETTINGS.cwd }, { cwd: SETTINGS.cwd, debug: line => debug.push(line), warn: () => undefined, tokenStore: memoryChannelTokens({ DEEPSEEK_API_KEY: API_KEY }) }, { channels: memoryCodexChannels(), env: {}, executable: { path: '/fake/backend-envkey', source: 'env', version: '0.160.1' }, hubDeps: { transportFactory: fake.transportFactory } })
+  check('backend: missing provider env_key is injected from the credential store', fake.spawns.length === 2 && fake.spawns[0]!.env.DEEPSEEK_API_KEY === undefined && fake.spawns[1]!.env.DEEPSEEK_API_KEY === API_KEY)
+  check('backend: env_key injection names the variable without leaking its value', debug.some(line => line.includes('DEEPSEEK_API_KEY')) && safe(debug))
+  runtime.release()
+  await closeAllCodexHubs()
+  const exported = await prepareCodexRuntime({ kind: 'create', cwd: SETTINGS.cwd }, { cwd: SETTINGS.cwd, debug: () => undefined, warn: () => undefined, tokenStore: memoryChannelTokens({ DEEPSEEK_API_KEY: API_KEY }) }, { channels: memoryCodexChannels(), env: { DEEPSEEK_API_KEY: API_KEY }, executable: { path: '/fake/backend-envkey', source: 'env', version: '0.160.1' }, hubDeps: { transportFactory: fake.transportFactory } })
+  check('backend: an exported provider env_key reuses the first child', fake.spawns.length === 3 && fake.spawns[2]!.env.DEEPSEEK_API_KEY === API_KEY)
+  exported.release()
+  await closeAllCodexHubs()
+}
+
 {
   const fake = createFakeAppServer()
   fake.on('config/read', () => ({ config: {} }))

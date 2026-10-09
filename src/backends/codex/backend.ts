@@ -97,6 +97,28 @@ export async function prepareCodexRuntime(target: OpenTarget, host: CodexBackend
       try { config = rec(rec(await hub.call(CLIENT.configRead, { includeLayers: false, cwd }))?.config) }
       catch { host.debug('codex: config/read failed; managed injection disabled') }
     }
+    // A provider in the user's own config can take its credential from an
+    // environment key (`env_key`, e.g. DEEPSEEK_API_KEY). When the launching
+    // environment does not export it but the DSH credential store declares
+    // it, inject it into the child: a stored key then works without an
+    // exported variable. The key joins `injectedEnvKeys`, so the hub
+    // fingerprint separates keyless and keyed children and a keyless hub is
+    // never reused for a session whose provider needs the key.
+    if (launch.provider === undefined) {
+      const providerId = str(config?.model_provider) || 'openai'
+      const providerEnvKey = str(rec(rec(config?.model_providers)?.[providerId])?.env_key)
+      if (providerEnvKey !== undefined && providerEnvKey !== '' && (settings.env[providerEnvKey] ?? '') === '') {
+        const stored = host.tokenStore?.read(providerEnvKey)
+        if (stored !== undefined) {
+          release()
+          settings = { ...settings, env: { ...settings.env, [providerEnvKey]: stored }, injectedEnvKeys: [...(settings.injectedEnvKeys ?? []), providerEnvKey] }
+          hub = acquireCodexHub(settings, deps)
+          release = hub.retain()
+          await hub.ready
+          host.debug(`codex: provider env ${providerEnvKey} resolved from the DSH credential store`)
+        }
+      }
+    }
     const route = codexAuthRoute(config, env, launch.provider !== undefined)
     const externalAllowed = settings.credentialMode === 'external' && route.firstParty
     if (settings.credentialMode === 'external' && !externalAllowed) {
