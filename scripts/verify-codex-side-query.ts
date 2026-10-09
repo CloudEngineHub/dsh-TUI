@@ -89,7 +89,7 @@ await scenario('side query forks read-only without main events or goals', async 
     await fake.waitForRequest('thread/fork')
     const fork = paramsOf(fake, 'thread/fork')[0]!
     check('fork sandbox is read-only', fork.sandbox, 'read-only')
-    check('fork is ephemeral and excludes durable turns', { ephemeral: fork.ephemeral, excludeTurns: fork.excludeTurns, deferGoalContinuation: fork.deferGoalContinuation }, { ephemeral: true, excludeTurns: true, deferGoalContinuation: true })
+    check('fork is ephemeral and excludes durable turns without goal deferral', { ephemeral: fork.ephemeral, excludeTurns: fork.excludeTurns, deferGoalContinuation: fork.deferGoalContinuation }, { ephemeral: true, excludeTurns: true, deferGoalContinuation: undefined })
     check('fork uses readonly never approval and current model/cwd', { cwd: fork.cwd, model: fork.model, approvalPolicy: fork.approvalPolicy, developerInstructions: fork.developerInstructions }, { cwd: '/TMP/cwd', model: 'gpt-test', approvalPolicy: 'never', developerInstructions: 'Answer the side question using the existing conversation. Do not call tools, modify files, create goals, or start agents. Give one concise answer.' })
     await fake.waitForRequest('turn/start')
     const start = paramsOf(fake, 'turn/start')[0]!
@@ -107,6 +107,31 @@ await scenario('side query forks read-only without main events or goals', async 
     await settle()
     check('successful side query unsubscribes child', paramsOf(fake, 'thread/unsubscribe').at(-1)?.threadId, CHILD)
     check('successful side query has no timer leak', clock.pending(), 0)
+  } finally { await hub.close() }
+})
+
+await scenario('side query falls back to a fresh ephemeral thread when no rollout exists', async () => {
+  const fake = createFakeAppServer()
+  const clock = manualClock()
+  fake.on('thread/fork', () => { throw new FakeRpcError(-32600, 'no rollout found for thread id thread-parent') })
+  fake.on('thread/start', () => ({ thread: { id: CHILD, cwd: '/TMP/cwd', turns: [], status: { type: 'idle' } }, model: 'gpt-test', cwd: '/TMP/cwd', modelProvider: 'relay', reasoningEffort: 'low', approvalPolicy: 'on-request', sandbox: { type: 'workspaceWrite' } }))
+  fake.on('turn/start', () => ({ turn: { id: 'fallback-turn', status: 'inProgress' } }))
+  const hub = await makeHub(fake, clock)
+  try {
+    const pending = sideDeps(hub, clock).ask('first question before any turn')
+    await fake.waitForRequest('thread/start')
+    const start = paramsOf(fake, 'thread/start')[0]!
+    check('fallback thread is ephemeral with the same guard rails', { ephemeral: start.ephemeral, approvalPolicy: start.approvalPolicy, sandbox: start.sandbox, model: start.model }, { ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only', model: 'gpt-test' })
+    check('fallback fork was attempted first', paramsOf(fake, 'thread/fork').length, 1)
+    await fake.waitForRequest('turn/start')
+    check('fallback turn targets the fresh child', paramsOf(fake, 'turn/start')[0]?.threadId, CHILD)
+    fake.notify('turn/started', { threadId: CHILD, turn: { id: 'fallback-turn', status: 'inProgress' } })
+    fake.notify('item/completed', { threadId: CHILD, turnId: 'fallback-turn', item: { type: 'agentMessage', text: 'fresh answer' } })
+    fake.notify('turn/completed', { threadId: CHILD, turn: { id: 'fallback-turn', status: 'completed' } })
+    check('fallback answers without the parent conversation', await pending, { answer: 'fresh answer' })
+    await settle()
+    check('fallback child is unsubscribed', paramsOf(fake, 'thread/unsubscribe').at(-1)?.threadId, CHILD)
+    check('fallback clears the query timer', clock.pending(), 0)
   } finally { await hub.close() }
 })
 

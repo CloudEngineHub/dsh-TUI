@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import type { SessionCapabilities } from '../../../agent/capabilities.js'
 import { t } from '../../../i18n.js'
-import { errorText, rec, str } from '../narrow.js'
+import { errorText, rec, str, type Rec } from '../narrow.js'
 import { CLIENT, NOTIFY } from '../protocol/index.js'
 import { RPC_ERROR, type RpcClock } from '../rpc/client.js'
 import type { CodexHub, ThreadSink } from '../rpc/hub.js'
@@ -13,6 +13,24 @@ export function createCodexSideQuery(deps: { readonly hub: CodexHub; readonly se
   const active = new Set<AbortController>()
   let closed = false
   const cancelAll = (): void => { for (const controller of active) controller.abort() }
+
+  /** Open the child the side turn runs on: an ephemeral read-only fork of
+   * the current thread — or, when nothing has been persisted yet and
+   * `thread/fork` therefore has no rollout to load (a brand-new session, or
+   * its first turn still running), a fresh ephemeral thread with the same
+   * guard rails. The conversation is empty in exactly that state, so the
+   * fork would have carried no context anyway. */
+  const forkSideThread = async (): Promise<Rec | undefined> => {
+    const rails = { cwd: deps.cwd, model: deps.settings.model, approvalPolicy: 'never', sandbox: 'read-only' } as const
+    const instructions = 'Answer the side question using the existing conversation. Do not call tools, modify files, create goals, or start agents. Give one concise answer.'
+    try {
+      return rec(await deps.hub.call(CLIENT.threadFork, { threadId: deps.threadId(), ephemeral: true, excludeTurns: true, ...rails, developerInstructions: instructions }))
+    } catch (error) {
+      if (!/no rollout found/iu.test(errorText(error))) throw error
+      deps.debug('codex: side query fork found no rollout yet; answering on a fresh ephemeral thread')
+      return rec(await deps.hub.call(CLIENT.threadStart, { ...rails, ephemeral: true, developerInstructions: instructions }))
+    }
+  }
   const capability: NonNullable<SessionCapabilities['sideQuery']> = {
     async ask(prompt, options = {}) {
       if (options.signal?.aborted) return { answer: null }
@@ -38,11 +56,10 @@ export function createCodexSideQuery(deps: { readonly hub: CodexHub; readonly se
         try {
           // Keep a late fork response observable so its temporary thread can
           // be unsubscribed after cancellation; never start a turn on it.
-          const response = rec(await deps.hub.call(CLIENT.threadFork, {
-            threadId: deps.threadId(), ephemeral: true, excludeTurns: true, deferGoalContinuation: true,
-            cwd: deps.cwd, model: deps.settings.model, approvalPolicy: 'never', sandbox: 'read-only',
-            developerInstructions: 'Answer the side question using the existing conversation. Do not call tools, modify files, create goals, or start agents. Give one concise answer.',
-          }))
+          // `deferGoalContinuation` is deliberately absent: newer app-servers
+          // reject it combined with `ephemeral`, and an ephemeral fork never
+          // continues a goal anyway.
+          const response = await forkSideThread()
           childId = str(rec(response?.thread)?.id)
           if (childId === undefined) throw new Error(t('codex-side-open-failed'))
           if (signal.aborted || closed || deps.closed()) return { answer: null }

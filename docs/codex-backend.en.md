@@ -92,6 +92,13 @@ is handed to Codex unchanged. Non-first-party routes should use their own provid
 credentials or a channel key. Account status shows only credential source, subscription
 type and host, not an email address or key.
 
+One bridging exception: when the active provider takes its credential from an `env_key`
+(say `DEEPSEEK_API_KEY`) that the launching environment did not export but the DSH credential
+store declares, the stored value is injected into the app-server child after `config/read`
+(the hub is re-acquired; the key joins the hub fingerprint through `injectedEnvKeys`). A key
+stored once in the credential store therefore works without exporting a shell variable. The
+value only ever travels into the spawn pipeline, never into logs, notices or events.
+
 ### The three `/login` methods
 
 | Method | Purpose and storage |
@@ -267,10 +274,14 @@ Real model vision and image generation were not tested in this round.
 
 usageLimited/budgetLimited goals show a blocked state and reason. Unsupported goal APIs
 do not expose the capability. `/btw`/`/recap` use a read-only sandbox with no approval
-escalation, request answer-only behavior and reject tool/approval requests. Cancellation
-interrupts the temporary turn and unsubscribes the fork. They consume model quota, not
-free local summaries. Ephemeral fork creation/non-persistence was checked offline; actual
-side-query model answers were not tested in this round.
+escalation, request answer-only behavior and reject tool/approval requests. The fork never
+carries `deferGoalContinuation` (app-servers from 0.162 reject it combined with `ephemeral`),
+and when the thread has no rollout on disk yet (nothing persisted, e.g. a brand-new session)
+the side call falls back to a fresh ephemeral `thread/start` — the conversation is empty in
+exactly that state, so no context is lost. Cancellation interrupts the temporary turn and
+unsubscribes the fork. They consume model quota, not free local summaries. Ephemeral fork
+creation/non-persistence was checked offline; actual side-query model answers were not
+tested in this round.
 
 ## Limitations and troubleshooting
 
