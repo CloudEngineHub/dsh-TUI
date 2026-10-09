@@ -314,5 +314,46 @@ const report = (name: string, ok: boolean, detail: string) => {
   await sleep(100)
 }
 
+
+/** 场景 N：btw 面板输入框 —— 面板聚焦时 IME 光标停在面板输入框，而非主聊天框。 */
+{
+  const { stdout, stdin, cursor, findAfterChar } = makeHarness(60, 12)
+  const { BtwComposer } = await import('../src/components/sidePanel/btw/BtwComposer.js')
+  const app = await render(
+    React.createElement(BtwComposer, {
+      state: { text: '你好', caret: 2 },
+      focused: true,
+      busy: false,
+      width: 60,
+    }),
+    { stdout, stdin, stderr: stdout, exitOnCtrlC: false, patchConsole: false },
+  )
+  await sleep(500)
+  {
+    // 按宽字符的显示宽度定位行尾，原生光标与 IME 使用同一锚点。
+    const cur = cursor()
+    const caret = findAfterChar('好')
+    report('btw composer 聚焦：原生光标与输入末尾重合', caret !== undefined && cur.x === caret.x && cur.y === caret.y, `cursor=${JSON.stringify(cur)} caret=${JSON.stringify(caret)}`)
+  }
+  app.unmount()
+  await sleep(100)
+  const app2 = await render(
+    React.createElement(BtwComposer, {
+      state: { text: '你好', caret: 2 },
+      focused: false,
+      busy: false,
+      width: 60,
+    }),
+    { stdout, stdin, stderr: stdout, exitOnCtrlC: false, patchConsole: false },
+  )
+  await sleep(500)
+  {
+    // 未聚焦（阅读层）不声明：光标不得停在输入行——聚焦层之外不该有第二个 IME 锚点。
+    const cur = cursor()
+    report('btw composer 未聚焦：不声明光标（无第二个 IME 锚点）', cur.y !== 1, `cursor=${JSON.stringify(cur)}`)
+  }
+  app2.unmount()
+  await sleep(100)
+}
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

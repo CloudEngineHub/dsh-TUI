@@ -243,7 +243,7 @@ for (const fullscreen of [false, true]) {
   const tree = (secondary: boolean, marker = 'first') => <AlternateScreen mouseTracking={false}>
     <Text>{marker}</Text>
     <Secondary active={secondary} />
-    <PromptInput channel={channel as never} controllerRef={controller} cursorActive={!secondary} helpOpen={false}
+    <PromptInput channel={channel as never} controllerRef={controller} cursorParking={!secondary} helpOpen={false}
       onToggleHelp={() => {}} onRunCommand={() => false} selectionActive={false} />
   </AlternateScreen>
   const app = await render(tree(true), {

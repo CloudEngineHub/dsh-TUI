@@ -190,6 +190,7 @@ export function attachDshExtensions(
   // service attachment has no authority after its injected lifetime ends.
   const jobProjection = createJobProjection(() => state, {
     owner, notify: (...args) => notify(...args), rowIds, agent: () => binding.agent, steer: text => channelCommands(state).steer(text),
+    history: () => dshNative().rawHistory(),
   })
 
   // The DSH slash-command registry (optional service): /plan, /goal and
@@ -545,6 +546,7 @@ export function attachDshExtensions(
     modeActions,
     projector,
     subagents: subagentProjection,
+    jobs: jobProjection,
     agentView,
     messageObserver,
     seedUpstreamRetry,

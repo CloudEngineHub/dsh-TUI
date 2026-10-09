@@ -135,6 +135,7 @@ export function BtwThreadScene({
         busy={busy}
         notice={notice === null ? undefined : notice}
         onActivate={activateComposer}
+        width={columns - 2}
       />
     </Box>
   )
