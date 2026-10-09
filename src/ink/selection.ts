@@ -58,6 +58,9 @@ export type SelectionState = {
   focus: Point | null
   /** True between mouse-down and mouse-up. */
   isDragging: boolean
+  /** Monotonic copy-on-select revision: advances on drag completion or
+   *  keyboard extension, never on scroll/resize or duplicate releases. */
+  settledRevision: number
   /** For word/line mode: the initial word/line bounds from the first
    *  multi-click. Drag extends from this span to the word/line at the
    *  current mouse position so the original word/line stays selected
@@ -152,6 +155,7 @@ export function createSelectionState(): SelectionState {
     anchor: null,
     focus: null,
     isDragging: false,
+    settledRevision: 0,
     anchorSpan: null,
     scrolledOffAbove: [],
     scrolledOffBelow: [],
@@ -258,7 +262,7 @@ export function updateSelection(
 /**
  * End a drag: clear the dragging flag while keeping anchor/focus so the
  * highlight stays visible and the text can be copied. Call
- * clearSelection to drop the selection after copy or on Esc.
+ * clearSelection to drop the selection on Esc or a clearing copy action.
  *
  * Deferred ghost guard: a drag that scrolled both ends fully off the same
  * viewport edge (wheeled away while the button was held) is dropped HERE,
@@ -268,6 +272,7 @@ export function updateSelection(
  * @param s - the selection state to mutate.
  */
 export function finishSelection(s: SelectionState): void {
+  const wasDragging = s.isDragging
   s.isDragging = false
   if (s.dragBounds !== undefined) {
     const { top, bottom } = s.dragBounds
@@ -276,8 +281,8 @@ export function finishSelection(s: SelectionState): void {
       clearSelection(s)
     }
   }
-  // Otherwise keep anchor/focus so highlight stays visible and text can be
-  // copied. Clear via clearSelection() on Esc or after copy.
+  if (wasDragging && hasSelection(s)) s.settledRevision += 1
+  // Keep anchor/focus after automatic copy; Escape clears the highlight.
 }
 
 /**
@@ -639,6 +644,7 @@ export function moveFocus(s: SelectionState, col: number, row: number): void {
   // shiftSelection clamp) no longer reflects intent. Anchor stays put so
   // virtualAnchorRow is still valid for its own round-trip.
   s.virtualFocusRow = undefined
+  s.settledRevision += 1
 }
 
 /**
@@ -1680,6 +1686,27 @@ export function applySelectionOverlay(
       if (colStart > colEnd) continue
     }
     const rowOff = row * width
+    // Match copy's content boundary, rather than painting through viewport
+    // padding. Ignore excluded columns when finding the last content cell:
+    // text in the side panel must not extend a chat-origin highlight.
+    const rowStart = selection.fence?.colStart ?? 0
+    let rowEnd = selection.fence?.colEnd ?? width - 1
+    const wrappedEnd = row + 1 < screen.height ? screen.softWrap[row + 1]! : 0
+    if (wrappedEnd > 0) rowEnd = Math.min(rowEnd, wrappedEnd - 1)
+    let contentCol = rowEnd
+    for (; contentCol >= rowStart; contentCol--) {
+      const idx = rowOff + contentCol
+      if (noSelect[idx] === 1 && !selection.includeNoSelectCells) continue
+      const cell = cellAtIndex(screen, idx)
+      if (cell.width === CellWidth.SpacerTail || cell.width === CellWidth.SpacerHead) continue
+      if ((screen.copyRegion?.[idx] ?? 0) !== 0 || cell.char.trim() !== '') {
+        // A soft-wrapped fragment keeps its source separator spaces. For
+        // hard lines, trim trailing blanks but retain wide glyph tails.
+        colEnd = Math.min(colEnd, wrappedEnd > 0 ? rowEnd : contentCol + (cell.width === CellWidth.Wide ? 1 : 0))
+        break
+      }
+    }
+    if (contentCol < rowStart) continue
     for (let col = colStart; col <= colEnd; col++) {
       const idx = rowOff + col
       // Skip noSelect cells — gutters stay visually unchanged so it's

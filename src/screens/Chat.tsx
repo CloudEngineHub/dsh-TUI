@@ -2075,7 +2075,7 @@ export function Chat({
   // Mouse text selection auto-copy: active only in
   // fullscreen (<AlternateScreen> supplies mouse tracking); a no-op
   // subscription in inline mode, where selection belongs to the terminal.
-  // The copy clears the highlight and posts a transient notification.
+  // The copy retains the highlight and posts a transient notification.
   // Smart migration hint (product ask): ~12s after mount, one background
   // pass over the foreign-agent stores; when a source was active inside the
   // 20-minute window, surface the user's own wording once per session. The
