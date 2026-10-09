@@ -1089,7 +1089,6 @@ const dict = {
   'btw-thread-error': { zh: '本轮失败', en: 'This turn failed' },
   'btw-thread-cancelled': { zh: '已取消本轮侧问', en: 'Side question cancelled' },
   'btw-thread-unread': { zh: '有新回答', en: 'New answer' },
-  'btw-thread-send-to-chat': { zh: '发送到聊天', en: 'Send to chat' },
   'btw-thread-answer-attached': { zh: '答案已附加到下一次主聊天提交', en: 'Answer attached to your next main chat submission' },
   'btw-thread-answer-truncated': { zh: '答案过长，附加时已截断', en: 'Answer exceeded the attach limit and was truncated' },
   'btw-fullscreen-title': { zh: '侧问线程', en: 'Side thread' },
