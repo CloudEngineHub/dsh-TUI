@@ -162,14 +162,16 @@ export function BtwPanelAdapter({ width, height, focused, visible }: PanelProps)
   }, [sessionId, submitDraft, newTopic, attachTurn, copyLatest, height, setCaret])
   usePanelInput(onKey, { active: focused && visible })
 
-  // ── 头部：首问标题 + 状态徽（● 回答中 / Qn 轮数）+ 新话题，下压一条细线 ──
-  const title = thread !== undefined && thread.turns.length > 0 ? thread.turns[0]!.question : ''
+  // ── 头部（只有线程后才画）：首问标题 + 状态徽 + 新话题，下压一条细线 ──
+  // 空线程不画头部：标题没有内容，`新话题` 在空线程上也无事可做（清空/换题的
+  // 语义只对已有线程成立）——面板标签栏已经给了这块版面的标题。
   const newLabel = t('btw-thread-new')
   const turnCount = thread?.turns.length ?? 0
+  const title = turnCount > 0 ? thread!.turns[0]!.question : ''
   const chip = busy ? '● ' + t('btw-answering') : turnCount > 0 ? `Q${turnCount}` : ''
   const budget = Math.max(6, width - 2)
   const titleRoom = budget - stringWidth(newLabel) - stringWidth(chip) - 4
-  const header = (
+  const header = turnCount === 0 ? null : (
     <Box flexDirection="column" width="100%" flexShrink={0}>
       <Box flexDirection="row" width="100%" height={1} paddingLeft={1}>
         <Text bold wrap="truncate">{truncateWidth(title, Math.max(2, titleRoom))}</Text>
@@ -198,7 +200,7 @@ export function BtwPanelAdapter({ width, height, focused, visible }: PanelProps)
       <BtwThreadView
         thread={thread}
         width={width}
-        height={Math.max(3, height - 6)}
+        height={Math.max(3, height - (header === null ? 4 : 6))}
         alive={visible}
         onAttachTurn={attachTurn}
         scrollHandleRef={scrollRef}

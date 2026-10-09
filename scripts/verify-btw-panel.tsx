@@ -204,6 +204,10 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   check('P1. 空态提示可见（面板 ≈40 列）', empty.includes('还没有侧问')
     && empty.includes('旁路问答') && empty.includes('参考最近'), empty.split('\n').filter(l => l.includes('还没有') || l.includes('旁路') || l.includes('参考')).join(' | '))
   check('P1b. 输入框有占位提示（Enter/点击聚焦模型可见）', empty.includes('点击或'), empty.split('\n').filter(l => l.includes('›') || l.includes('点击')).join(' | '))
+  // 空线程不画头部：标题没内容、`新话题` 也无事可做（面板标签栏已有标题）。
+  check('P1c. 空态不画头部（无 [n] 新话题、无头部细线）',
+    !empty.includes('新话题') && !/│─{8,}/u.test(empty),
+    empty.split('\n').filter(l => l.includes('新话题') || /│─{8,}/u.test(l)).join(' | '))
   const r = btwThreads.submit('probe-session', '这是第一个很长很长的问题关于编译器与运行时的边界', channel.ask.ask)
   check('P2a. 直发线程成功', r.ok === true)
   await delay(300)
@@ -215,6 +219,9 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   check('P2b. 问题文本上屏', shown.includes('第一个很长很长的问题'))
   check('P2c. 答案文本上屏（Markdown 渲染无崩溃）', shown.includes('回答完成版'))
   check('P2d. composer 在面板底部可见（› 提示）', shown.includes('›'))
+  check('P2e. 有线程后头部出现（标题 + [n] 新话题 + 细线）',
+    shown.includes('新话题') && shown.includes('─────') && shown.includes('第一个很长很长的问题'),
+    shown.split('\n').filter(l => l.includes('新话题') || l.includes('──')).join(' | '))
   if (process.env.BTW_SCREENSHOT) console.log('SCREENSHOT-EMPTY\n' + frame.lines().map(l => l.slice(58)).join('\n'))
   await frame.app.unmount()
 }
