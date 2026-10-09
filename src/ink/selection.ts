@@ -1644,6 +1644,72 @@ export function captureScrolledRows(
   }
 }
 
+/** Selected columns on a visible row, excluding empty rows and trailing padding. */
+function selectedRowColumns(
+  screen: Screen,
+  selection: SelectionState,
+  row: number,
+  start: Point,
+  end: Point,
+): { start: number; end: number } | null {
+  if (row < 0 || row >= screen.height) return null
+  const width = screen.width
+  let colStart = Math.max(0, row === start.row ? start.col : 0)
+  let colEnd = row === end.row ? Math.min(end.col, width - 1) : width - 1
+  // Panel-origin gestures are clipped to their column fence on every row.
+  if (selection.fence !== undefined) {
+    colStart = Math.max(colStart, selection.fence.colStart)
+    colEnd = Math.min(colEnd, selection.fence.colEnd)
+  }
+  if (colStart > colEnd) return null
+  const rowOff = row * width
+  // Ignore excluded columns when finding the last content cell: text in
+  // the side panel must not extend a chat-origin highlight or cursor.
+  const rowStart = selection.fence?.colStart ?? 0
+  let rowEnd = Math.min(selection.fence?.colEnd ?? width - 1, width - 1)
+  const wrappedEnd = row + 1 < screen.height ? screen.softWrap[row + 1]! : 0
+  if (wrappedEnd > 0) rowEnd = Math.min(rowEnd, wrappedEnd - 1)
+  for (let col = rowEnd; col >= rowStart; col--) {
+    const idx = rowOff + col
+    if (screen.noSelect[idx] === 1 && !selection.includeNoSelectCells) continue
+    const cell = cellAtIndex(screen, idx)
+    if (cell.width === CellWidth.SpacerTail || cell.width === CellWidth.SpacerHead) continue
+    if ((screen.copyRegion?.[idx] ?? 0) !== 0 || cell.char.trim() !== '') {
+      // Soft-wrapped fragments retain source separator spaces; hard lines
+      // trim trailing blanks while keeping the entire final wide glyph.
+      colEnd = Math.min(colEnd, wrappedEnd > 0 ? rowEnd : col + (cell.width === CellWidth.Wide ? 1 : 0))
+      return colStart <= colEnd ? { start: colStart, end: colEnd } : null
+    }
+  }
+  return null
+}
+
+/**
+ * Resolve the focus-side edge of the visible selection. Blank rows and
+ * padding cannot own a native cursor; step toward the anchor until selected
+ * content is found. Wide glyphs use their head cell, as text copying does.
+ */
+export function getSelectionCursor(screen: Screen, selection: SelectionState): Point | null {
+  const bounds = selectionBounds(selection)
+  if (bounds === null) return null
+  const forward = comparePoints(selection.anchor!, selection.focus!) <= 0
+  const firstRow = Math.max(0, bounds.start.row)
+  const lastRow = Math.min(screen.height - 1, bounds.end.row)
+  const step = forward ? -1 : 1
+  for (let row = forward ? lastRow : firstRow; row >= firstRow && row <= lastRow; row += step) {
+    const columns = selectedRowColumns(screen, selection, row, bounds.start, bounds.end)
+    if (columns === null) continue
+    for (let col = forward ? columns.end : columns.start; col >= columns.start && col <= columns.end; col += step) {
+      const idx = row * screen.width + col
+      if (screen.noSelect[idx] === 1 && !selection.includeNoSelectCells) continue
+      const cell = cellAtIndex(screen, idx)
+      if (cell.width === CellWidth.SpacerTail || cell.width === CellWidth.SpacerHead) continue
+      return { col, row }
+    }
+  }
+  return null
+}
+
 /**
  * Apply the selection overlay directly to the screen buffer by changing
  * the style of every cell in the selection range. Called after the
@@ -1676,38 +1742,10 @@ export function applySelectionOverlay(
   const noSelect = screen.noSelect
   const covered = imageCoveredCells(images, width, screen.height)
   for (let row = start.row; row <= end.row && row < screen.height; row++) {
-    let colStart = row === start.row ? start.col : 0
-    let colEnd = row === end.row ? Math.min(end.col, width - 1) : width - 1
-    // Fence (panel-origin gestures) clips every row to the anchor's noSelect
-    // column run — intermediate rows never highlight the chat column.
-    if (selection.fence !== undefined) {
-      colStart = Math.max(colStart, selection.fence.colStart)
-      colEnd = Math.min(colEnd, selection.fence.colEnd)
-      if (colStart > colEnd) continue
-    }
+    const columns = selectedRowColumns(screen, selection, row, start, end)
+    if (columns === null) continue
     const rowOff = row * width
-    // Match copy's content boundary, rather than painting through viewport
-    // padding. Ignore excluded columns when finding the last content cell:
-    // text in the side panel must not extend a chat-origin highlight.
-    const rowStart = selection.fence?.colStart ?? 0
-    let rowEnd = selection.fence?.colEnd ?? width - 1
-    const wrappedEnd = row + 1 < screen.height ? screen.softWrap[row + 1]! : 0
-    if (wrappedEnd > 0) rowEnd = Math.min(rowEnd, wrappedEnd - 1)
-    let contentCol = rowEnd
-    for (; contentCol >= rowStart; contentCol--) {
-      const idx = rowOff + contentCol
-      if (noSelect[idx] === 1 && !selection.includeNoSelectCells) continue
-      const cell = cellAtIndex(screen, idx)
-      if (cell.width === CellWidth.SpacerTail || cell.width === CellWidth.SpacerHead) continue
-      if ((screen.copyRegion?.[idx] ?? 0) !== 0 || cell.char.trim() !== '') {
-        // A soft-wrapped fragment keeps its source separator spaces. For
-        // hard lines, trim trailing blanks but retain wide glyph tails.
-        colEnd = Math.min(colEnd, wrappedEnd > 0 ? rowEnd : contentCol + (cell.width === CellWidth.Wide ? 1 : 0))
-        break
-      }
-    }
-    if (contentCol < rowStart) continue
-    for (let col = colStart; col <= colEnd; col++) {
+    for (let col = columns.start; col <= columns.end; col++) {
       const idx = rowOff + col
       // Skip noSelect cells — gutters stay visually unchanged so it's
       // clear they're not part of the copy. Surrounding selectable cells

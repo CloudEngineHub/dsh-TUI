@@ -20,7 +20,7 @@ import {
 } from '../lib/types/ui.js'
 import { useSelection } from '../lib/types/ink/hooks/use-selection.js'
 import instances from '../lib/types/ink/instances.js'
-import { createSelectionState, startSelection, updateSelection, applySelectionOverlay, getSelectedText } from '../lib/types/ink/selection.js'
+import { createSelectionState, startSelection, updateSelection, applySelectionOverlay, getSelectedText, getSelectionCursor } from '../lib/types/ink/selection.js'
 import { CharPool, HyperlinkPool, StylePool, createScreen, setCellAt, cellAtIndex } from '../lib/types/ink/screen.js'
 import { sleep, settle, settled } from './lib/term-test.mjs'
 
@@ -58,6 +58,7 @@ function verifyOverlay() {
     applySelectionOverlay(screen, selection, styles)
     return {
       text: getSelectedText(selection, screen),
+      cursor: getSelectionCursor(screen, selection),
       rows: Array.from({ length: screen.height }, (_, row) =>
         Array.from({ length: screen.width }, (_, col) => col)
           .filter(col => cellAtIndex(screen, row * screen.width + col).styleId !== before[row * screen.width + col])),
@@ -70,6 +71,7 @@ function verifyOverlay() {
     const result = paint(screen, styles, [0, 0], [11, 2])
     equal('overlay excludes trailing padding and blank rows', result.rows, [[0, 1, 2], [], [0, 1, 2]])
     equal('blank rows remain in copied text', result.text, 'a b\n\nend')
+    equal('selection cursor stays at the actual text edge', result.cursor, { col: 2, row: 2 })
   }
   {
     const { screen, styles } = make(['    x', 'a   b'])
@@ -104,16 +106,35 @@ function verifyOverlay() {
     // SpacerTail inherits the head's terminal style; it is never restyled.
     equal('Unicode grapheme heads highlight without trailing padding', result.rows, [[0, 2, 4]])
     equal('Unicode copy preserves graphemes', result.text, '界👩‍💻e\u0301')
+    equal('selection cursor anchors to a complete grapheme', result.cursor, { col: 4, row: 0 })
   }
   {
     const { screen, styles } = make(['hi    PANEL', '      PANEL'])
     for (let row = 0; row < screen.height; row++) screen.noSelect.fill(1, row * screen.width + 6, (row + 1) * screen.width)
-    equal('excluded side-panel text does not extend chat highlighting', paint(screen, styles, [0, 0], [11, 1]).rows, [[0, 1], []])
+    const result = paint(screen, styles, [0, 0], [11, 1])
+    equal('excluded side-panel text does not extend chat highlighting', result.rows, [[0, 1], []])
+    equal('chat cursor ignores blank rows with excluded panel text', result.cursor, { col: 1, row: 0 })
   }
   {
     const { screen, styles } = make(['chat  P', 'chat'])
     for (let row = 0; row < screen.height; row++) screen.noSelect.fill(1, row * screen.width + 6, (row + 1) * screen.width)
-    equal('panel-origin selection trims its own padding', paint(screen, styles, [6, 0], [11, 1]).rows, [[6], []])
+    const result = paint(screen, styles, [6, 0], [11, 1])
+    equal('panel-origin selection trims its own padding', result.rows, [[6], []])
+    equal('panel cursor remains inside its text fence', result.cursor, { col: 6, row: 0 })
+  }
+  {
+    const { screen, styles } = make(['', '   '])
+    const result = paint(screen, styles, [0, 0], [11, 1])
+    equal('blank-only selections have no text cursor', result.cursor, null)
+  }
+  {
+    const { screen, styles } = make(['abc', '   ', 'tail'])
+    equal('reverse drag across blanks uses the first selected text edge', paint(screen, styles, [2, 2], [11, 1]).cursor, { col: 0, row: 2 })
+  }
+  {
+    const { screen, styles } = make(['>>> abc'])
+    screen.noSelect.fill(1, 0, 4)
+    equal('reverse cursor skips excluded gutters', paint(screen, styles, [6, 0], [0, 0]).cursor, { col: 4, row: 0 })
   }
 }
 
