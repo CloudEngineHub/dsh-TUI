@@ -54,6 +54,9 @@ export function createBindingEvents(ctx: Context, deps: {
     onEnd(info: { id: string; runId?: string; stopReason: string; lastAssistantMessage?: unknown[] }, parent: object | null): void
     forget?(agent: Agent): void
   }
+  /** The job projection's own raw-event half: it times the card hold a tool
+   *  call puts on the job it registers (see channel/job-projection.ts). */
+  jobs?: { onSessionEvent(event: unknown): void }
   agentView: { schedule(): void }
   messageObserver?: { publish(session: unknown, event: unknown): void }
   /** Seed the upstream auto-retry policy (upstream-retry.ts) for the
@@ -204,6 +207,7 @@ export function createBindingEvents(ctx: Context, deps: {
         if (!current()) return
         deps.messageObserver?.publish(native.agent.session, event)
         deps.modeActions.onSessionEvent(native.agent.session, event)
+        deps.jobs?.onSessionEvent(event)
       }))
     },
   } satisfies BindingFeedHooks

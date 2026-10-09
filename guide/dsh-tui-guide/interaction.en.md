@@ -848,10 +848,13 @@ Additional forms:
 - The DSH `/permission` pick is persisted the same way at `~/.dsh-tui/permission.json`: every durable
   preset switch teaches it (picker, typed command, Shift+Tab static mode, or a switch the official
   command performed on its own), and a session that never customized its permission planes starts on
-  the remembered preset — applied through the same official switch path. Plan-mode transients are
-  excluded (entering plan keeps the pre-plan memory; the exit restore teaches it again), an explicit
-  `DSH_PERMISSION_MODE` deployment pin outranks the file, and an identity the mounted roster no
-  longer offers is skipped.
+  the remembered preset — applied through the same official switch path. "Never customized" means the
+  USER never touched it: the composition itself writes its default preset into every fresh session at
+  creation (`dsh-permission-presets`' `session/created` → `pinInitialPermission`), and those events are
+  not a user choice — only a session that ran a turn, or whose identity is not the composition default,
+  keeps its own planes. Plan-mode transients are excluded (entering plan keeps the pre-plan memory; the
+  exit restore teaches it again), `DSH_PERMISSION_MODE` is this launch's initial permission plane and
+  outranks the file when set, and an identity the mounted roster no longer offers is skipped.
 - When the registry service is absent, TUI uses its legacy three-row compatibility roster; a mounted but broken service is unavailable and fails closed.
 - Non-DSH backends (Claude) that declare native permission modes answer
   `/permission` with that backend's own modes: `default` (ask before each risky
