@@ -6690,6 +6690,10 @@ export function Chat({
           key="prompt-input"
           channel={channel}
           suspended={promptReplacementOpen}
+          // 侧栏持有键盘焦点时主输入框让出原生终端光标（IME 预编辑/读屏的
+          // 锚点）：否则输入法的临时拼音会浮在主聊天框，打出汉字才回到面板
+          // 输入框。聚焦面板自己的输入组件（btw composer 等）接管声明。
+          cursorParking={sidePanel.focus !== 'panel'}
           // 宠物面板是活动面板时，通知由它的头顶气泡「说出来」，输入框上方
           // 不再重复弹同一条（error 色除外——可能要行动的信号永远走 toast）。
           // 渲染期判定（split + activePanelId），与气泡同一次提交切换，不会

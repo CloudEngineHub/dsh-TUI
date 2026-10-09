@@ -11,6 +11,8 @@ import { Box, Text } from '../../../ui.js'
 import { t } from '../../../i18n.js'
 import type { SidePanelKeyFlags } from '../types.js'
 import { nextCodePoint, previousCodePoint } from '../../AgentMessageComposer.js'
+import { useDeclaredCursor } from '../../../ink/hooks/use-declared-cursor.js'
+import { stringWidth } from '../../../ink/stringWidth.js'
 
 /** 编辑态（text 来自线程 store；caret 属于当前 surface）。 */
 export interface BtwComposerState {
@@ -74,6 +76,7 @@ export function BtwComposer({
   busy,
   notice,
   onActivate,
+  width,
 }: {
   readonly state: BtwComposerState
   /** 编辑焦点（决定边框高亮与 caret 反白块的画法）。 */
@@ -84,9 +87,20 @@ export function BtwComposer({
   readonly notice?: { readonly text: string; readonly failure: boolean } | undefined
   /** 点击输入框进入编辑（默认箭头归导航，点进来才编辑）。 */
   readonly onActivate?: () => void
+  /** 输入框总宽（含边框），用于把光标声明钳在框内；缺省按 60 估。 */
+  readonly width?: number
 }): React.ReactNode {
   const { text, caret } = state
   const shown = Math.min(caret, text.length)
+  // 原生终端光标（IME 预编辑/读屏的锚点）停在编辑光标处：终端把输入法的
+  // 临时拼音画在硬件光标位置——面板聚焦时主输入框已让位（PromptInput 的
+  // cursorParking），这里不声明的话，输入法会一直浮在主聊天框、直到打出
+  // 汉字才「跳」回面板。列 = 左内边距 1 + › 1 + 空格 1 + 光标前文本宽。
+  const inputRowRef = useDeclaredCursor({
+    line: 0,
+    column: Math.min(3 + stringWidth(text.slice(0, shown)), Math.max(4, (width ?? 60) - 4)),
+    active: focused,
+  })
   return (
     <Box flexDirection="column" flexShrink={0}>
       {/* 一个真正的输入框：圆角边框 + 聚焦高亮；提示并到框内右缘，不另占行。 */}
@@ -100,7 +114,7 @@ export function BtwComposer({
           onActivate()
         }}
       >
-        <Box flexDirection="row" flexShrink={0} paddingLeft={1} paddingRight={1}>
+        <Box flexDirection="row" flexShrink={0} paddingLeft={1} paddingRight={1} ref={inputRowRef}>
           <Text color={focused ? 'accent' : undefined} bold>{'›'}</Text>
           <Text>{' '}</Text>
           {focused ? (
@@ -108,7 +122,9 @@ export function BtwComposer({
               {/* 窄面板里让草稿先被截，键位提示保持完整（提示是可用性信息，
                   草稿尾部本来也看不见）。 */}
               <Box flexDirection="row" flexShrink={1} minWidth={0}>
-                <Text>{text.slice(0, shown)}</Text>
+                {/* truncate：长草稿不折行——反白 caret 停在本行，光标声明（line 0）
+                    才与视觉 caret 贴合；顺带修掉长草稿把面板撑高的存量问题。 */}
+                <Text wrap="truncate">{text.slice(0, shown)}</Text>
                 <Text inverse>{text.slice(shown, shown + 1) || ' '}</Text>
                 {text.slice(shown + 1) !== '' ? <Text wrap="truncate">{text.slice(shown + 1)}</Text> : null}
               </Box>
