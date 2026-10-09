@@ -324,7 +324,6 @@ const report = (name: string, ok: boolean, detail: string) => {
       state: { text: '你好', caret: 2 },
       focused: true,
       busy: false,
-      width: 60,
     }),
     { stdout, stdin, stderr: stdout, exitOnCtrlC: false, patchConsole: false },
   )
@@ -342,7 +341,6 @@ const report = (name: string, ok: boolean, detail: string) => {
       state: { text: '你好', caret: 2 },
       focused: false,
       busy: false,
-      width: 60,
     }),
     { stdout, stdin, stderr: stdout, exitOnCtrlC: false, patchConsole: false },
   )

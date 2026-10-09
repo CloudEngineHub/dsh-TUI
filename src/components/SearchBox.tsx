@@ -208,10 +208,10 @@ export function SearchBox({
         placeholderAlign === 'left' ? (
           <Box flexDirection="row" width="100%">
             <Text>{prefixText}</Text>
-            {/* The caret sits on the first placeholder glyph without
-                inserting another cell or shifting the text. */}
+            {/* An empty placeholder still reserves a blank caret cell
+                so the input row cannot collapse. */}
             <Text dimColor wrap="truncate">
-              {caretBlink ? caretCell(placeholder.slice(0, 1)) : placeholder.slice(0, 1)}
+              {caretCell(placeholder.slice(0, 1) || ' ')}
               {placeholder.slice(1)}
             </Text>
           </Box>

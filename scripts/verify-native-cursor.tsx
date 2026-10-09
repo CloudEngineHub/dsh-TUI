@@ -1,7 +1,7 @@
 /**
  * Native caret regression: inline/fullscreen, narrow widths, repaint ordering,
  * uninterrupted cursor-only motion, editor handoff/clearing, focus, resize,
- * resume and cleanup.
+ * resume and cleanup, empty plugin inputs and clipped btw drafts.
  * Uses the real renderer and xterm/headless; no model or credentials required.
  * Run: node --import tsx/esm scripts/verify-native-cursor.tsx
  */
@@ -19,7 +19,7 @@ const [
   { mkdtempSync, openSync, closeSync, readFileSync, rmSync }, { tmpdir }, { join },
   { render, Box, Text, InputCaret, AlternateScreen, useDeclaredCursor, useNativeCursor, useTerminalSize, useInput },
   { ListItem }, { SearchBox }, { PromptInput }, { default: instances }, { renderToScreen }, { cellAt },
-  { PromptEditorLayer },
+  { PromptEditorLayer }, { ExtensionDialog }, { BtwComposer }, { NativeCursorContext },
   { settled, viewportLines, writeParsed },
 ] = await Promise.all([
   import('node:assert/strict'), import('react'), import('@xterm/headless'), import('node:stream'),
@@ -28,6 +28,8 @@ const [
   import('../src/components/PromptInput.js'),
   import('../src/ink/instances.js'), import('../src/ink/render-to-screen.js'), import('../src/ink/screen.js'),
   import('../src/components/PromptEditor.js'),
+  import('../src/components/ExtensionDialog.js'), import('../src/components/sidePanel/btw/BtwComposer.js'),
+  import('../src/ink/components/CursorDeclarationContext.js'),
   import('./lib/term-test.mjs'),
 ])
 
@@ -214,6 +216,122 @@ for (const fullscreen of [false, true]) {
     assert.equal(h.at(h.cursor().x, h.cursor().y)?.getChars(), '中', 'the shared caret anchors a wide glyph')
   } finally {
     await h.close(app)
+  }
+}
+
+// Empty plugin inputs reserve their caret row even without a placeholder.
+for (const fullscreen of [false, true]) {
+  for (const width of [60, 24]) {
+    for (const placeholder of [undefined, '']) {
+      const h = makeHarness(width, 12)
+      const tree = <ExtensionDialog
+        dialog={{ kind: 'input', key: 'empty-input', title: 'EMPTY INPUT', initial: '', placeholder }}
+        onDecide={() => {}} onCancel={() => {}}
+      />
+      const app = await render(fullscreen ? <AlternateScreen mouseTracking={false}>{tree}</AlternateScreen> : tree, {
+        stdout: h.stdout, stdin: h.stdin, stderr: h.stderr,
+        exitOnCtrlC: false, patchConsole: false, terminalImages: false,
+      })
+      try {
+        instances.get(h.stdout)!.onRender()
+        await h.flush()
+        const title = h.find('EMPTY INPUT')
+        assert.ok(title, 'the plugin input dialog is mounted')
+        // The title's margin occupies one row; the input must keep the next.
+        const origin = { x: title.x, y: title.y + 2 }
+        const caretAt = (columns: number) => h.visible()
+          && h.cursor().x === origin.x + columns && h.cursor().y === origin.y
+        assert.ok(caretAt(0), 'an empty plugin input has a visible caret without a placeholder')
+
+        const text = 'a中🙂b'
+        h.stdin.write(text)
+        assert.ok(await settled(() => h.find(text) !== null && caretAt(6)),
+          'typing preserves the input row and advances by display cells')
+        h.stdin.write('\x7f'.repeat([...text].length))
+        assert.ok(await settled(() => h.find(text) === null && caretAt(0)),
+          'Backspace to empty preserves the input row and visible caret')
+        console.log(`PASS native cursor empty dialog: ${fullscreen ? 'fullscreen' : 'inline'} ${width} cols placeholder=${JSON.stringify(placeholder)}`)
+      } finally {
+        await h.close(app)
+      }
+    }
+  }
+}
+
+// The painted fallback also keeps an empty input row in both blink phases.
+for (const caretBlink of [true, false]) {
+  const h = makeHarness(8, 4)
+  const app = await render(<Box flexDirection="column">
+    <NativeCursorContext.Provider value={false}>
+      <SearchBox query="" placeholder="" prefix="" width={8} borderless
+        placeholderAlign="left" isFocused isTerminalFocused caretBlink={caretBlink} />
+    </NativeCursorContext.Provider>
+    <Text>AFTER</Text>
+  </Box>, {
+    stdout: h.stdout, stdin: h.stdin, stderr: h.stderr,
+    exitOnCtrlC: false, patchConsole: false, terminalImages: false,
+  })
+  try {
+    instances.get(h.stdout)!.onRender()
+    await h.flush()
+    assert.deepEqual(h.find('AFTER'), { x: 0, y: 1 }, 'the empty painted input reserves one row')
+    assert.equal(Boolean(h.at(0, 0)?.isInverse()), caretBlink, 'blinking only changes the blank caret style')
+  } finally {
+    await h.close(app)
+  }
+}
+
+// A clipped btw draft anchors to its rendered caret, before the fixed hint.
+for (const fullscreen of [false, true]) {
+  for (const width of [60, 40]) {
+    const h = makeHarness(width, 12)
+    const draft = 'abcdef'.repeat(20)
+    const wrap = (node: ReactNode) => fullscreen ? <AlternateScreen mouseTracking={false}>{node}</AlternateScreen> : node
+    const tree = (text: string, caret: number, focused = true, native = true) => wrap(
+      <NativeCursorContext.Provider value={native}>
+        <BtwComposer state={{ text, caret }} focused={focused} busy={false} />
+      </NativeCursorContext.Provider>,
+    )
+    const app = await render(tree(draft, draft.length, true, false), {
+      stdout: h.stdout, stdin: h.stdin, stderr: h.stderr,
+      exitOnCtrlC: false, patchConsole: false, terminalImages: false,
+    })
+    const paint = async (text: string, caret: number, focused = true, native = true) => {
+      app.rerender(tree(text, caret, focused, native))
+      instances.get(h.stdout)!.onRender()
+      await h.flush()
+    }
+    try {
+      instances.get(h.stdout)!.onRender()
+      await h.flush()
+      const row = h.find('…')?.y
+      assert.notEqual(row, undefined, 'the long draft is visibly clipped')
+      // Read the painted fallback from terminal cells, independently of
+      // the declaration's coordinate calculation or the renderer node cache.
+      const column = Array.from({ length: width }, (_, x) => x)
+        .find(x => h.at(x, row!)?.isInverse())
+      assert.notEqual(column, undefined, 'the painted caret stays in the clipped input')
+      const fallbackRows = viewportLines(h.term)
+      await paint(draft, draft.length)
+      assert.equal(h.visible(), true, 'the clipped draft keeps its native caret visible')
+      assert.deepEqual(h.cursor(), { x: column, y: row },
+        'the caret follows the clipped text instead of landing on the hint')
+      assert.deepEqual(viewportLines(h.term), fallbackRows, 'switching caret modes preserves the text layout')
+      assert.ok(h.find('Enter send · Esc'), 'the fixed editing hint stays intact')
+
+      await paint(draft, draft.length, false)
+      assert.equal(h.visible(), false, 'leaving btw editing withdraws the caret')
+      await paint('a中🙂b', 1)
+      assert.equal(h.visible(), true)
+      assert.equal(h.at(h.cursor().x, h.cursor().y)?.getChars(), '中',
+        'returning to a short draft restores the caret on its actual glyph')
+      assert.ok(!h.at(h.cursor().x, h.cursor().y)?.isInverse(), 'the native caret has no painted duplicate')
+      await paint('a中🙂b', 2)
+      assert.equal(h.at(h.cursor().x, h.cursor().y)?.getChars(), '🙂', 'the caret anchors to the emoji leader')
+      console.log(`PASS native cursor clipped btw: ${fullscreen ? 'fullscreen' : 'inline'} ${width} cols`)
+    } finally {
+      await h.close(app)
+    }
   }
 }
 
