@@ -549,6 +549,13 @@ export interface PromptInputProps {
   /** Keep the draft mounted while another prompt-slot panel owns the UI. */
   suspended?: boolean
   /**
+   * 原生终端光标（IME 预编辑/读屏锚点）的让位：侧栏持有键盘焦点时传
+   * false——主输入框停驻硬件光标会让输入法的临时拼音浮在主聊天框，即使
+   * 按键已经路由进面板。聚焦的面板自己的输入组件（如 btw 的 composer）
+   * 会接管声明。默认 true（无侧栏/焦点在聊天时行为不变）。
+   */
+  cursorParking?: boolean
+  /**
    * Host judgement "this notice needs no toast" — the pet panel says it with
    * its speech bubble instead while it is the active panel. Evaluated during
    * render (not via an effect-written ledger) so toast and bubble swap in
@@ -687,6 +694,7 @@ export function PromptInput({
   channel,
   toastSuppressed,
   suspended = false,
+  cursorParking = true,
   draftCache,
   helpOpen,
   onToggleHelp,
@@ -3931,7 +3939,7 @@ export function PromptInput({
       caretVisualCol + (expanded ? editorGutterCols + 1 : 0),
       expanded ? editorGutterCols + 1 + inputWidth : inputWidth,
     ),
-    active: !suspended && !selectionActive,
+    active: !suspended && !selectionActive && cursorParking,
   })
 
   /**

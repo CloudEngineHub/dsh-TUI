@@ -505,6 +505,8 @@ async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
       return plainText(stdout.frames.slice(from))
     },
     unmount: async () => { await instance.unmount() },
+    /** 硬件终端光标（IME 预编辑锚点）落点。 */
+    cursor: () => ({ x: term.buffer.active.cursorX, y: term.buffer.active.cursorY }),
   }
 }
 
@@ -528,6 +530,22 @@ async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
   await delay(500)
   const answered = chat.lines().join('\n')
   check('C1e. 答案落进面板线程', answered.includes('快路由的答案'), answered.split('\n').filter(l => l.trim() !== '').slice(-4).join(' | '))
+  // C1f/C1g：IME 光标让位（issue #1427）——面板聚焦 + 编辑层时，硬件光标
+  //（IME 预编辑/读屏锚点）必须停在面板输入框，而不是主聊天框；焦点回
+  // 聊天后由主输入框重新接管。100 列下分栏 ≈ 62/38，阈值取 55。
+  await chat.stdin.write('\r')
+  await delay(300)
+  {
+    const cur = chat.cursor()
+    check('C1f. 面板聚焦编辑时硬件光标在面板输入框（IME 锚点让位）', cur.x > 55, `cursor=${JSON.stringify(cur)}`)
+  }
+  await chat.stdin.write(ESC)
+  await chat.stdin.write(ESC)
+  await delay(300)
+  {
+    const cur = chat.cursor()
+    check('C1g. 焦点回聊天后光标回主输入框', cur.x < 55, `cursor=${JSON.stringify(cur)}`)
+  }
   await chat.unmount()
 }
 
