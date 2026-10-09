@@ -985,9 +985,11 @@ const GROUPS = {
 // 已随三合一会话界面删除，其断言一并移除。
     ["verify-agent-view", ['node', '--import', 'tsx/esm', 'scripts/verify-agent-view.mjs']],
 // 后台任务（ctx.jobs）UI 投影：BackgroundJobStore 单元（注册/转换/消失
-// 合成 killed/输出镜像有界）、channel 集成（建卡、job_output 镜像、落定
-// toast、kill 权限传递、无 jobs 服务降级、/new 重置）、JobCard/JobsPanel
-// 渲染冒烟（三行瀑布、settled 折叠、面板行/提示）。
+// 合成 killed/removed 整条丢弃/输出镜像有界）、channel 集成（建卡、job_output
+// 镜像、落定 toast、awaited 落定不报 toast、removed 让前台 shell 的卡离场、
+// 有调用在飞时挂起卡、换绑从会话日志重建在飞台账、kill 权限传递、无 jobs
+// 服务降级、/new 重置）、JobCard/JobsPanel 渲染冒烟（三行瀑布、settled 折叠、
+// 面板行/提示）。
     ["verify-jobs-panel", ['node', '--import', 'tsx/esm', 'scripts/verify-jobs-panel.tsx']],
 // jobs 面板：最近进度跨 settle 保留（带时间与来源）、有界时间线（启动/进度/输出/
 // 缺口/收尾，满了丢最旧）、保留的尾巴如实标注、无历史时的提示。
