@@ -15,11 +15,12 @@
  * (generalize `ensureProfileReleaseAgeExclude` in update.ts then).
  */
 import { spawn } from 'node:child_process'
+import { rmSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import stripAnsi from 'strip-ansi'
 import type { SdkInstallResult, SdkInstallTarget, SdkInstaller } from '../../agent/backend.js'
-import { isStandaloneRuntime, profileWorkspaceYamlPath, resolveDshProfileName } from '../../update.js'
+import { ensureWorkspaceAllowBuilds, ensureWorkspaceStoreDir, isStandaloneRuntime, profileWorkspaceYamlPath, resolveDshProfileName } from '../../update.js'
 import { shellQuote } from '../../utils/shellQuote.js'
 import { CLAUDE_SDK_SPECIFIER } from './contract.js'
 
@@ -83,16 +84,66 @@ export async function checkPnpmAvailable(): Promise<boolean> {
   return run.code === 0 && run.spawnError === undefined
 }
 
+/** pnpm's store-mismatch diagnostic line: the profile's node_modules was
+ *  built against a store pnpm no longer resolves (environment-drifted
+ *  \u0060XDG_DATA_HOME\u0060, a changed global store config). Rebuild-healable. */
+const UNEXPECTED_STORE = /ERR_PNPM_UNEXPECTED_STORE/u
+
+function isStoreMismatch(run: CapturedRun): boolean {
+  return run.code !== 0 && run.spawnError === undefined
+    && run.lines.some(line => UNEXPECTED_STORE.test(line))
+}
+
 /** Install the pinned SDK into the profile root. Resolve target failures are
- *  the caller's business (the wizard shows manual instructions for them). */
+ *  the caller\u0027s business (the wizard shows manual instructions for them).
+ *
+ *  Store drift heals itself: the workspace file is pinned to a stable
+ *  \u0060storeDir\u0060 first (see \u0060ensureWorkspaceStoreDir\u0060), and when pnpm still
+ *  reports \u0060ERR_PNPM_UNEXPECTED_STORE\u0060 — drift that predates the pin, or the
+ *  pin itself landing on an existing node_modules — node_modules is removed,
+ *  rebuilt from the lockfile under the pinned store, and the add retried,
+ *  all inside this one result. A live TUI may be running from that
+ *  node_modules: open inodes keep it alive on Linux/macOS, and the window
+ *  matches what a manual rebuild already does today. */
 export function startClaudeSdkInstall(dir: string): SdkInstaller {
   let cancelled = false
-  const { promise, cancel } = runPnpm(['add', CLAUDE_SDK_SPECIFIER], dir)
-  const result = promise.then<SdkInstallResult>(run => {
+  let active: Readonly<{ cancel: () => void }> | undefined
+  const run = (args: readonly string[]): Promise<CapturedRun> => {
+    const current = runPnpm(args, dir)
+    active = current
+    return current.promise
+  }
+  const result = (async (): Promise<SdkInstallResult> => {
+    // Seed before any pnpm run: the store pin (drift prevention — a pin
+    // landing after node_modules exists is itself a store change, and the
+    // heal below covers pre-existing drift and that induced one in the same
+    // pass) and the build-script opt-outs a full lockfile rebuild needs on
+    // pnpm ≥11 (ERR_PNPM_IGNORED_BUILDS, see ensureProfileAllowBuilds).
+    const yamlPath = join(dir, 'pnpm-workspace.yaml')
+    ensureWorkspaceStoreDir(yamlPath)
+    ensureWorkspaceAllowBuilds(yamlPath)
+    const first = await run(['add', CLAUDE_SDK_SPECIFIER])
     if (cancelled) return { kind: 'cancelled' }
-    if (run.code === 0) return { kind: 'ok' }
-    if (run.spawnError === 'ENOENT') return { kind: 'pnpm-missing' }
-    return { kind: 'failed', exitCode: run.code ?? 1, tail: run.lines.slice(-10) }
-  })
-  return { result, cancel: () => { cancelled = true; cancel() } }
+    if (first.code === 0) return { kind: 'ok' }
+    if (first.spawnError === 'ENOENT') return { kind: 'pnpm-missing' }
+    if (!isStoreMismatch(first)) {
+      return { kind: 'failed', exitCode: first.code ?? 1, tail: first.lines.slice(-10) }
+    }
+    try {
+      rmSync(join(dir, 'node_modules'), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    } catch {
+      return { kind: 'failed', exitCode: first.code ?? 1, tail: first.lines.slice(-10) }
+    }
+    const rebuild = await run(['install'])
+    if (cancelled) return { kind: 'cancelled' }
+    if (rebuild.code !== 0) {
+      return { kind: 'failed', exitCode: rebuild.code ?? 1, tail: rebuild.lines.slice(-10) }
+    }
+    const retry = await run(['add', CLAUDE_SDK_SPECIFIER])
+    if (cancelled) return { kind: 'cancelled' }
+    if (retry.code === 0) return { kind: 'ok', rebuiltStore: true }
+    if (retry.spawnError === 'ENOENT') return { kind: 'pnpm-missing' }
+    return { kind: 'failed', exitCode: retry.code ?? 1, tail: retry.lines.slice(-10) }
+  })()
+  return { result, cancel: () => { cancelled = true; active?.cancel() } }
 }

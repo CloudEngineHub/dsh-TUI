@@ -18,7 +18,7 @@ export type SdkInstallPhase =
   | { readonly kind: 'confirm'; readonly dir: string; readonly version: string; readonly specifier: string }
   | { readonly kind: 'checking' }
   | { readonly kind: 'running' }
-  | { readonly kind: 'done' }
+  | { readonly kind: 'done'; readonly rebuiltStore?: boolean }
   | { readonly kind: 'failed'; readonly exitCode: number; readonly tail: readonly string[]; readonly dir: string; readonly version: string; readonly specifier: string }
   | { readonly kind: 'pnpm-missing'; readonly dir: string; readonly version: string; readonly specifier: string }
   | { readonly kind: 'cancelled' }
@@ -58,7 +58,12 @@ export function SdkInstallWizard({ phase }: { phase: SdkInstallPhase }): React.R
             />
           </Box>
         )}
-        {phase.kind === 'done' && <Text>{t('sdk-install-done')}</Text>}
+        {phase.kind === 'done' && (
+          <Box flexDirection="column">
+            <Text>{t('sdk-install-done')}</Text>
+            {phase.rebuiltStore === true && <Text dimColor>{t('sdk-install-rebuilt')}</Text>}
+          </Box>
+        )}
         {phase.kind === 'failed' && (
           <Box flexDirection="column">
             <Text>{t('sdk-install-failed', { code: String(phase.exitCode) })}</Text>

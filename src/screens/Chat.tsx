@@ -894,7 +894,7 @@ export function Chat({
       if (result.kind === 'ok') {
         // 装好了：重探内核（灰行变亮，无需重启进程），停在完成面板。
         reprobeKernels()
-        setSdkPhase({ kind: 'done' })
+        setSdkPhase({ kind: 'done', rebuiltStore: result.rebuiltStore === true })
       } else if (result.kind === 'failed') {
         setSdkPhase({ kind: 'failed', exitCode: result.exitCode, tail: result.tail, dir, version: sdkInstallPinned.version, specifier: sdkInstallPinned.specifier })
       } else if (result.kind === 'pnpm-missing') {

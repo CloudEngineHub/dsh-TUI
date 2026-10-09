@@ -2474,6 +2474,7 @@ const dict = {
   'sdk-install-running': { zh: '正在安装，可能需要一分钟…', en: 'Installing… this can take a minute' },
   'sdk-install-running-sub': { zh: 'Esc 取消', en: 'Esc to cancel' },
   'sdk-install-done': { zh: 'SDK 安装完成，Claude 内核已可用。', en: 'SDK installed — the Claude kernel is ready.' },
+  'sdk-install-rebuilt': { zh: '检测到 pnpm store 漂移，已自动重建依赖后装好。', en: 'pnpm store drift detected — dependencies were rebuilt automatically.' },
   'sdk-install-done-hint': { zh: '**Enter** 返回内核选择 · Esc 关闭', en: '**Enter** back to the kernel picker · Esc close' },
   'sdk-install-failed': { zh: '安装失败（pnpm 退出码 {{code}}）。可手动安装：', en: 'Install failed (pnpm exit code {{code}}). Manual install:' },
   'sdk-install-manual': { zh: '{{command}}', en: '{{command}}' },

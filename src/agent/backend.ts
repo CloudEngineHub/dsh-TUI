@@ -44,9 +44,12 @@ export type SdkInstallTarget =
   | { readonly kind: 'standalone' }
   | { readonly kind: 'no-profile' }
 
-/** How `pnpm add` ended; `tail` carries the captured output's last lines. */
+/** How \u0060pnpm add\u0060 ended; \u0060tail\u0060 carries the captured output's last lines.
+ *  \u0060ok.rebuiltStore\u0060 marks the self-healed path: pnpm reported
+ *  ERR_PNPM_UNEXPECTED_STORE and the installer rebuilt node_modules under
+ *  the pinned store before the add succeeded. */
 export type SdkInstallResult =
-  | { readonly kind: 'ok' }
+  | { readonly kind: 'ok'; readonly rebuiltStore?: boolean }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'pnpm-missing' }
   | { readonly kind: 'failed'; readonly exitCode: number; readonly tail: readonly string[] }

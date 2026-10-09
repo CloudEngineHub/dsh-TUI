@@ -18,7 +18,13 @@ You need:
   entry or `/kernel`) and press Enter on the dim Claude row — the wizard
   locates the profile directory and installs the pinned SDK via pnpm; the row
   lights up when it finishes (standalone builds and profile-less launches get
-  manual instructions). The manual equivalent, run once in the dsh-tui profile
+  manual instructions). Before installing, the wizard pins the profile's pnpm
+  store to a stable path (storeDir: ../../.pnpm-store, written into
+  pnpm-workspace.yaml), so store drift caused by environment overrides (a
+  sandbox or relay that redirected XDG_DATA_HOME, and the like) cannot recur;
+  if the drift predates the install, the installer rebuilds the dependencies
+  automatically and retries — no manual cleanup needed. The manual equivalent,
+  run once in the dsh-tui profile
   directory (`~/.dsh/profiles/dsh-tui`, or `$DSH_HOME/profiles/dsh-tui` when
   `DSH_HOME` is set):
 

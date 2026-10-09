@@ -1121,7 +1121,12 @@ function allowBuildsKeyLine(key: string): string {
  * ERR_PNPM_IGNORED_BUILDS diagnostic stays the visible fallback.
  */
 export function ensureProfileAllowBuilds(profile: string): AllowBuildsOutcome | undefined {
-  const yamlPath = profileWorkspaceYamlPath(profile)
+  return ensureWorkspaceAllowBuilds(profileWorkspaceYamlPath(profile))
+}
+
+/** Path-based core of {@link ensureProfileAllowBuilds} for callers that hold
+ *  the profile directory itself (the Claude SDK installer's heal pass). */
+export function ensureWorkspaceAllowBuilds(yamlPath: string): AllowBuildsOutcome | undefined {
   try {
     if (!existsSafe(dirname(yamlPath))) return undefined
     let text = ''
@@ -1291,6 +1296,53 @@ export function ensureProfileReleaseAgeExclude(
   }
 }
 
+/** What ensureWorkspaceStoreDir did to the profile workspace file. */
+export interface StoreDirOutcome {
+  /** True when the file was written (the pin was appended). */
+  readonly changed: boolean
+}
+
+/**
+ * pnpm resolves its content-addressable store from the environment when no
+ * explicit setting exists: a pnpm run under a redirected \u0060XDG_DATA_HOME\u0060
+ * (sandbox, relay, container) silently records THAT location in the
+ * profile's \u0060node_modules/.modules.yaml\u0060, and every later pnpm run in the
+ * profile — dsh's own updates, plugin installs, the Claude SDK wizard —
+ * dies with ERR_PNPM_UNEXPECTED_STORE until node_modules is rebuilt by
+ * hand. Pin \u0060storeDir\u0060 in the profile's pnpm-workspace.yaml so all of them
+ * resolve the same store whatever the environment says. The value is
+ * relative on purpose: pnpm resolves it against the workspace file\u0027s
+ * directory, landing on \u0060<dsh home>/.pnpm-store\u0060 beside the profiles root
+ * for every user and surviving a relocated \u0060DSH_HOME\u0060. Same best-effort,
+ * idempotent pattern as {@link ensureProfileAllowBuilds}: an existing
+ * top-level \u0060storeDir:\u0060 is never overwritten (an explicit user decision
+ * wins), a missing file is created, and any failure resolves to undefined —
+ * pnpm's own diagnostic stays the visible fallback, and the installer's
+ * store-mismatch self-heal catches what a failed pin leaves behind.
+ */
+export function ensureWorkspaceStoreDir(yamlPath: string): StoreDirOutcome | undefined {
+  try {
+    if (!existsSafe(dirname(yamlPath))) return undefined
+    let text = ''
+    try {
+      text = readFileSync(yamlPath, 'utf8')
+    } catch {
+      // Missing file — start from an empty document; writeFileSync creates it.
+    }
+    const lines = text.split(/\r?\n/u)
+    for (const line of lines) {
+      if (line !== '' && line === line.trimStart() && /^storeDir:/u.test(line)) {
+        return { changed: false }
+      }
+    }
+    if (lines.length > 0 && lines[lines.length - 1] !== '') lines.push('')
+    lines.push('storeDir: ../../.pnpm-store')
+    writeFileSync(yamlPath, `${lines.join('\n')}\n`)
+    return { changed: true }
+  } catch {
+    return undefined
+  }
+}
 function existsSafe(path: string): boolean {
   try {
     statSync(path)
