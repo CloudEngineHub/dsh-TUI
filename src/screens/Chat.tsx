@@ -2114,8 +2114,11 @@ export function Chat({
     // letting the highlight vanish silently.
     () => channel.notify(t('copy-refused-stale'), { timeoutMs: 2500 }),
   )
-  const { clearSelection: clearMouseSelection, hasSelection: hasMouseSelection } =
-    useSelection()
+  const {
+    clearSelection: clearMouseSelection,
+    hasSelection: hasMouseSelection,
+    getState: getMouseSelectionState,
+  } = useSelection()
   React.useEffect(() => {
     if (!channel.working || !terminalFocused) return
     const interval = setInterval(() => {
@@ -4406,11 +4409,11 @@ export function Chat({
       event.stopImmediatePropagation()
       return
     }
-    // Esc clears a settled mouse selection before the ordinary chat meanings
-    // below, but never before a top-level modal. Otherwise a preview opened
-    // over selected transcript text needed two Esc presses to close.
-    // hasSelection() is an imperative read — no subscription needed.
-    if (key.escape && hasMouseSelection()) {
+    // Esc cancels an active mouse drag or retained selection before ordinary
+    // chat meanings below, but never before a top-level modal. A preview
+    // opened over selected transcript text should close with one Esc.
+    // Selection queries are imperative reads — no subscription needed.
+    if (key.escape && (hasMouseSelection() || getMouseSelectionState()?.isDragging)) {
       clearMouseSelection()
       event.stopImmediatePropagation()
       return

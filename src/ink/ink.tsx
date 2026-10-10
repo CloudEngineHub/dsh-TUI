@@ -2126,9 +2126,9 @@ export default class Ink {
     return text;
   }
 
-  /** Clear the current text selection without copying. */
+  /** Cancel an active drag or clear the current text selection without copying. */
   clearTextSelection(): void {
-    if (!hasSelection(this.selection)) return;
+    if (!hasSelection(this.selection) && !this.selection.isDragging) return;
     clearSelection(this.selection);
     this.notifySelectionChange();
   }

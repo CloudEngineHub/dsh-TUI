@@ -171,12 +171,12 @@ function CopyOnSelectMount() {
 // Raw mode (App's stdin 'readable' handler) is only armed when a useInput
 // consumer exists — production has PromptInput/Chat; this tree needs one
 // explicitly or injected mouse sequences are never read. The Esc binding
-// mirrors Chat.tsx: a settled mouse selection is cleared before any other
-// Esc meaning.
+// mirrors Chat.tsx: an active drag or retained mouse selection is cleared
+// before the ordinary chat meanings of Esc.
 function InputConsumer() {
-  const { clearSelection, hasSelection } = useSelection()
+  const { clearSelection, hasSelection, getState } = useSelection()
   useInput((_input, key, event) => {
-    if (key.escape && hasSelection()) {
+    if (key.escape && (hasSelection() || getState()?.isDragging)) {
       clearSelection()
       event.stopImmediatePropagation()
     }
@@ -381,6 +381,21 @@ async function run(columns, fullscreen) {
   const after2 = stdout.frames.join('').match(/\x1b\]52;c;/g)?.length ?? 0
   check('Esc cancels the drag (selection gone)', ink?.hasTextSelection() === false)
   check('Esc cancel copies nothing', after2 === before)
+
+  // A press has no focus yet. Esc must cancel that gesture too, so later
+  // held-button motion and release cannot resurrect it or copy any text.
+  stdin.write('\x1b[<0;1;1M')
+  check('a bare press starts dragging without a selection', await settled(() =>
+    ink.selection.isDragging && ink.selection.focus === null && !ink.hasTextSelection()))
+  const beforeBarePressCancel = copyCount()
+  stdin.write('\x1b')
+  check('Esc cancels a drag before its first motion', await settled(() =>
+    !ink.selection.isDragging && ink.selection.anchor === null && ink.selection.focus === null))
+  stdin.write('\x1b[<32;6;1M\x1b[<0;6;1m')
+  await sleep(100) // 固定窗:探针 Esc 取消后的移动和松手不得重建选区或写入剪贴板
+  check('motion and release after Esc cannot restore the cancelled selection',
+    !ink.selection.isDragging && !ink.hasTextSelection() && ink.selection.anchor === null)
+  check('motion and release after Esc do not copy', copyCount() === beforeBarePressCancel)
 
   await cleanup()
   const out2 = stdout.frames.join('')
