@@ -4409,11 +4409,10 @@ export function Chat({
       event.stopImmediatePropagation()
       return
     }
-    // Esc cancels an active mouse drag or retained selection before ordinary
-    // chat meanings below, but never before a top-level modal. A preview
-    // opened over selected transcript text should close with one Esc.
+    // With no overlay open, Esc cancels an active mouse drag or retained
+    // selection before ordinary chat meanings. Open overlays own Esc.
     // Selection queries are imperative reads — no subscription needed.
-    if (key.escape && (hasMouseSelection() || getMouseSelectionState()?.isDragging)) {
+    if (overlay.kind === 'none' && key.escape && (hasMouseSelection() || getMouseSelectionState()?.isDragging)) {
       clearMouseSelection()
       event.stopImmediatePropagation()
       return

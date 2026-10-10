@@ -4,10 +4,12 @@
  * selected text — fired by the useCopyOnSelect subscription when the drag
  * settles. Copies retain the selection, duplicate releases do not copy,
  * and Esc clears it. Checks the painted terminal cells at 100/20 columns
- * plus the inline-mode boundary, alongside pure overlay edge cases.
+ * plus the inline-mode boundary, alongside pure overlay edge cases and
+ * real Chat Escape priority with search and preset overlays.
  *
  * Run against the compiled lib: `node scripts/verify-copy-on-select.mjs`
  */
+import './lib/fake-home.mjs'
 import { Writable, PassThrough } from 'node:stream'
 import React from 'react'
 import xterm from '@xterm/headless'
@@ -22,7 +24,7 @@ import { useSelection } from '../lib/types/ink/hooks/use-selection.js'
 import instances from '../lib/types/ink/instances.js'
 import { createSelectionState, startSelection, updateSelection, applySelectionOverlay, getSelectedText, getSelectionCursor } from '../lib/types/ink/selection.js'
 import { CharPool, HyperlinkPool, StylePool, createScreen, setCellAt, cellAtIndex } from '../lib/types/ink/screen.js'
-import { sleep, settle, settled } from './lib/term-test.mjs'
+import { findText, sleep, settle, settled, viewportLines } from './lib/term-test.mjs'
 
 const { Terminal } = xterm
 
@@ -402,11 +404,99 @@ async function run(columns, fullscreen) {
   check('alt-screen exited on unmount', out2.includes('\x1b[?1049l'))
 }
 
+async function runChatEscapePriority(columns) {
+  const [{ Chat }, { QuestionStore }] = await Promise.all([
+    import('../lib/types/screens/Chat.js'),
+    import('../lib/types/dsh-adapter/questions.js'),
+  ])
+  const { stdout, stderr, stdin, terminal, flush } = makeStreams(columns)
+  const previousInk = instances.get(process.stdout)
+  const channel = {
+    version: 0, rows: [{ id: 0, kind: 'user', text: 'SELECT_ME' }],
+    status: 'idle', sessionTitle: 'selection', agentId: 'selection', model: 'deepseek-v4-flash',
+    tokens: { input: 0, output: 0 }, cwd: '/tmp', displayCwd: '/tmp',
+    working: false, mode: { id: 'default', plan: false }, modeIndex: 0, cycleMode() {},
+    pending: [], commandList: [{ name: 'preset', description: 'Choose a preset' }],
+    commandCompletions: () => [], notifications: [],
+    subscribe: () => () => {}, submit() {}, cancel() {}, clear() {}, notify() {},
+    listModels: async () => [], listSessions: () => [], setResumeTarget() {},
+    listFiles: async () => [],
+    listPresets: async () => [{ id: 'fixture', name: 'fixture', description: 'PICKER_ONLY' }],
+  }
+  const questionStore = new QuestionStore()
+  const tree = () => React.createElement(AlternateScreen, null,
+    React.createElement(Chat, { channel, questionStore, fullscreen: true, onExit() {} }))
+  const app = await render(tree(), {
+    stdout, stderr, stdin, exitOnCtrlC: false, patchConsole: false, terminalImages: false,
+  })
+  const ink = instances.get(stdout)
+  instances.set(process.stdout, ink)
+  app.rerender(tree())
+  ink.setAltScreenActive(true, true)
+  const lines = () => viewportLines(terminal)
+  const copies = () => stdout.frames.join('').match(/\x1b\]52;c;/g)?.length ?? 0
+  const send = async data => {
+    stdin.write(data)
+    await new Promise(resolve => setImmediate(resolve))
+    ink.renderNow()
+    await flush()
+  }
+  const select = async () => {
+    await settle(() => findText(terminal, 'SELECT_ME') !== null)
+    const { col, row } = findText(terminal, 'SELECT_ME')
+    await send(`\x1b[<0;${col + 1};${row + 1}M\x1b[<32;${col + 7};${row + 1}M\x1b[<0;${col + 7};${row + 1}m`)
+    check(`Chat ${columns}: transcript selection is retained`, await settled(() =>
+      ink.hasTextSelection() && !ink.selection.isDragging))
+  }
+  try {
+    await settle(() => findText(terminal, 'SELECT_ME') !== null)
+    await send('\x0f') // Ctrl+O enters transcript mode, where / opens search.
+    await select()
+    await send('/')
+    check(`Chat ${columns}: search opens over the retained selection`, await settled(() =>
+      lines().some(line => line.trim() === '/') && ink.hasTextSelection()))
+    await send('ESC_QUERY')
+    const searchOpen = () => lines().some(line => line.trimStart().startsWith('/ESC_QUERY'))
+    check(`Chat ${columns}: search query is visible`, await settled(searchOpen))
+    let beforeEscape = copies()
+    await send('\x1b')
+    check(`Chat ${columns}: first Esc closes search and preserves selection without copying`, await settled(() =>
+      !searchOpen() && ink.hasTextSelection() && copies() === beforeEscape))
+    await send('\x1b')
+    check(`Chat ${columns}: next Esc clears the selection without copying`, await settled(() =>
+      !searchOpen() && !ink.hasTextSelection() && copies() === beforeEscape))
+
+    await send('\x0f') // Return to the prompt to open its /preset picker.
+    await select()
+    await send('/preset')
+    await settle(() => lines().some(line => line.includes('/preset')))
+    await send('\r')
+    const pickerOpen = () => lines().some(line => line.includes('PICKER_ONLY'))
+    check(`Chat ${columns}: preset picker opens over the retained selection`, await settled(() =>
+      pickerOpen() && ink.hasTextSelection()))
+    beforeEscape = copies()
+    await send('\x1b')
+    check(`Chat ${columns}: first Esc closes the picker and preserves selection without copying`, await settled(() =>
+      !pickerOpen() && ink.hasTextSelection() && copies() === beforeEscape))
+    await send('\x1b')
+    check(`Chat ${columns}: Esc clears the selection after closing the picker`, await settled(() =>
+      !ink.hasTextSelection() && copies() === beforeEscape))
+  } finally {
+    app.unmount()
+    await flush()
+    terminal.dispose()
+    if (previousInk) instances.set(process.stdout, previousInk)
+    else instances.delete(process.stdout)
+  }
+}
+
 verifyOverlay()
 try {
   await run(100, true)
   await run(20, true)
   await run(20, false)
+  await runChatEscapePriority(100)
+  await runChatEscapePriority(36)
   console.log(failed === 0 ? '\nAll checks passed.' : `\n${failed} check(s) FAILED.`)
   process.exit(failed === 0 ? 0 : 1)
 } catch (err) {
