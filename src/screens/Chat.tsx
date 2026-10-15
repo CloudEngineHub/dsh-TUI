@@ -2446,6 +2446,7 @@ export function Chat({
     lastOutcome: channel.turnUsage?.outcome,
     title: channel.sessionTitle,
     enabled: programStatusEnabled,
+    sessionId: channel.sessionId,
   })
 
   const handleWorkspaceResult = (result: TuiWorkspaceCommandResult): void => {
