@@ -30,7 +30,7 @@ import {
   type AdapterRuntimeOptions,
 } from '../adapter/kernel/runtime.js'
 import { adapterRuntimeFor } from '../adapter/kernel/runtime-context.js'
-import { panelStore } from '../components/sidePanel/PanelStore.js'
+import { panelStore, type PanelStoreEvent } from '../components/sidePanel/PanelStore.js'
 import type { PanelDefinition, PanelOwner } from '../components/sidePanel/types.js'
 import { makePluginPanelComponent } from '../components/sidePanel/pluginPanelAdapter.js'
 import { panelBridgeRequests } from '../components/sidePanel/panelBridge.js'
@@ -334,6 +334,8 @@ export class TuiPanelRuntime extends Service {
       },
       subscribe(listener: (event: TuiPanelEvent) => void) {
         return panelStore.subscribe(event => {
+          // hint 是宿主底栏的内部 chrome（面板自己广告键位），不进插件事件面。
+          if (event.type === 'hint') return
           const entry = panelStore.get(event.id)
           if (entry?.definition.source === 'plugin') listener(event)
         })
@@ -609,7 +611,9 @@ export class TuiPanelRuntime extends Service {
     const caller = requirePluginCaller(this.ctx, 'tuiPanels.subscribe', this)
     const owner = activationFiber(caller)
     if (owner === undefined || typeof listener !== 'function') return () => {}
-    const wrapped = (event: TuiPanelEvent): void => {
+    const wrapped = (event: PanelStoreEvent): void => {
+      // 同上：hint 只是宿主底栏的 chrome，不派发给插件订阅者。
+      if (event.type === 'hint') return
       const record = getPanelOwnerRecord(event.id)
       if (record === undefined || record.owner !== owner) return
       try {

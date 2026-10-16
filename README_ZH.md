@@ -225,7 +225,7 @@ ChatGPT OAuth、设备码或 API key（后者写入 Codex 自己的凭据存储�
 TPS 计入隐藏推理的生成时间，剔除工具执行时间；实时文本估算在 Codex 报告实际
 输出 token 用量后校正。
 
-原生浏览/归档、fork/对话回退、分页历史、图片、子代理、轮询后台终端、目标与
+原生浏览/归档、fork/对话回退（首条消息需 Codex app-server 0.160.1+）、分页历史、图片、子代理、轮询后台终端、目标与
 `/btw`/`/recap` 接入现有界面。`/logout` 仅清对应 dsh-auth 凭据；已载入的托管令牌
 需要正常重启，不注销原生登录。真实 0.160.1 app-server 九项无凭据离线检查与八项后台会话恢复检查通过，
 没有模型回合或费用；真实订阅登录、带凭据模型调用与真实 TTY 交互本轮未运行。
@@ -343,6 +343,8 @@ pnpm smoke
 ## 插件生态
 
 插件开发：[准入与开发指南](tui-profile/docs/plugin-admission-and-development.md) · [plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template) · [dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem)。参考实现：`dsh-working-activity`。
+
+通过包子路径导出的插件组件，按实际 ESM 入口最近的包清单准入（含 import-only 与条件导出），不继承外层包的身份。
 
 接缝分级与 API 说明：[插件开发](docs/plugins.md)。生态组织只维护收录，不背书社区插件。
 

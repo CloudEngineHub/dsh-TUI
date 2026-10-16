@@ -272,7 +272,8 @@ start notice: Codex itself rejects every turn of that provider.
 TPS includes hidden reasoning time and excludes tool execution time. Live
 text estimates are corrected when Codex reports output token usage.
 
-Native browsing/archive, fork/conversation rewind, paged history, images,
+Native browsing/archive, fork/conversation rewind (the first message requires
+Codex app-server 0.160.1+), paged history, images,
 subagents, polled background terminals, goals and `/btw`/`/recap` use the
 existing surfaces. `/logout` removes only the matching dsh-auth credential;
 already-loaded managed tokens require a normal restart, not native logout.
@@ -401,6 +402,8 @@ questionnaire, or tool-card changes also need the matching regression scripts.
 ## Plugin Ecosystem
 
 Plugin development: [admission & development guide](tui-profile/docs/plugin-admission-and-development.md) · [plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template) · [dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem). Reference implementation: `dsh-working-activity`.
+
+Exported plugin subcomponents are admitted using the nearest package manifest of their ESM entry, including import-only and conditional exports; they do not inherit an outer package's identity.
 
 Seam grading and API notes: [Plugin development](docs/plugins.en.md). The organization maintains the listing only; it does not endorse community plugins.
 

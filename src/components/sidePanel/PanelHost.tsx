@@ -90,9 +90,13 @@ export function PanelHost({ controller, channel, width, height, activity, attent
   }, [activeId])
 
   const mode = controller.zoom ? 'zoom' : 'split'
+  // focusChat 从控制器注入：面板送聊天后要能把列焦点交回聊天（见
+  // SidePanelRuntimeContext 的出口注释）。控制器对象每次渲染都是新的，
+  // 但 focusChat 本身是空依赖 useCallback，引用稳定。
+  const focusChat = controller.focusChat
   const runtimeContext = React.useMemo(
-    () => ({ runtime: controller.runtime, channel, activity, attention, trajectory, openFullscreen }),
-    [controller.runtime, channel, activity, attention, trajectory, openFullscreen],
+    () => ({ runtime: controller.runtime, channel, activity, attention, trajectory, openFullscreen, focusChat }),
+    [controller.runtime, channel, activity, attention, trajectory, openFullscreen, focusChat],
   )
 
   return (

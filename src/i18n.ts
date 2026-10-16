@@ -760,8 +760,15 @@ const dict = {
   'btw-thread-context-recent': { zh: '后续答案参考最近 {{n}} 组问答', en: 'Answers use the last {{n}} Q/A pairs as context' },
   'btw-thread-context-omitted': { zh: '已省略更早 {{n}} 组问答', en: '{{n}} earlier Q/A pair(s) omitted' },
   'btw-thread-followup': { zh: '输入追问…（Enter 发送 · Esc 回到对话 · Tab 切列表）', en: 'Type a follow-up… (Enter send · Esc back to chat · Tab list)' },
-  'btw-input-placeholder': { zh: '点击或 Enter 提问', en: 'Click or press Enter to ask' },
+  'btw-input-placeholder': { zh: 'Enter 提问', en: 'Enter to ask' },
   'btw-input-hint-edit': { zh: 'Enter 发送 · Esc', en: 'Enter send · Esc' },
+  // 底栏（宿主拼的那行）里 btw 的面板段：列表层说选择与 s/c（已附加时同一个键是
+  // 撤回），编辑层只说「↑ 选择」——框内不再放键位提示，那里只剩一句占位。
+  'btw-list-hint': { zh: '↑/↓ 选择 · s 送聊天 · c 复制', en: '↑/↓ select · s to chat · c copy' },
+  'btw-list-hint-attached': { zh: '↑/↓ 选择 · s 撤回 · c 复制', en: '↑/↓ select · s unsend · c copy' },
+  // 编辑层：↑ 离开输入框、把光标放到列表上开始选择。用全局最主流的「选择」而不是
+  // 自造词（「回标题」没人看得懂）；列表层那条紧接着告诉你在列表里能做什么。
+  'btw-hint-edit-back': { zh: '↑ 选择', en: '↑ select' },
   'btw-empty-lines': { zh: '旁路问答不打断主线：答案只留在这里，不进主聊天与会话记录。', en: 'Side questions never derail the main line: answers stay here, out of the main chat and session log.' },
   'btw-thread-busy': { zh: '上一个侧问还在回答，等它结束再追问', en: 'Still answering the last side question; ask again once it finishes' },
   'btw-thread-error': { zh: '本轮失败', en: 'This turn failed' },
@@ -770,7 +777,7 @@ const dict = {
   'btw-thread-answer-attached': { zh: '答案已附加到下一次主聊天提交', en: 'Answer attached to your next main chat submission' },
   'btw-thread-answer-truncated': { zh: '答案过长，附加时已截断', en: 'Answer exceeded the attach limit and was truncated' },
   'btw-fullscreen-title': { zh: '侧问线程', en: 'Side thread' },
-  'btw-scene-hints': { zh: 'Enter 追问 · ↑/↓ 滚动 · n 新话题 · s 送聊天 · c 复制 · Esc 返回', en: 'Enter ask · ↑/↓ scroll · n new · s to chat · c copy · Esc back' },
+  'btw-scene-hints': { zh: 'Enter 追问 · ↑/↓ 选择 · n 新话题 · s 送聊天 · c 复制 · Esc 返回', en: 'Enter ask · ↑/↓ select · n new · s to chat · c copy · Esc back' },
   'btw-panel-unavailable': { zh: 'btw 面板未启用（/settings → dsh-tui.sidePanel.panels）', en: 'btw panel not enabled (/settings → dsh-tui.sidePanel.panels)' },
   'btw-output-unavailable': { zh: '没有收到回答', en: 'No answer received' },
   'btw-answering': { zh: '思考中…', en: 'Answering…' },
@@ -2209,8 +2216,15 @@ const dict = {
   'companion-stat-sessions': { zh: '会话 ×{{n}}', en: 'sessions ×{{n}}' },
   'picker-title-panel': { zh: '打开面板', en: 'Open panel' },
   'panel-sent-to-chat': { zh: '已附加到输入框：{{title}}（Esc 可撤）', en: 'Attached to the composer: {{title}} (Esc to remove)' },
+  // 面板把内容送进主输入框之后再撤回时的提示（btw 的 s 二次按下走这条）。
+  'panel-context-detached': { zh: '已从输入框撤回，不再附加到主聊天', en: 'Removed from the composer' },
   'companion-send-title': { zh: '伙伴状态', en: 'Companion status' },
-  'panel-hint-focused': { zh: 'Esc 聊天 · ←/→ 切换 · z 缩放 · +/- 调宽', en: 'Esc chat · ←/→ panels · z zoom · +/- width' },
+  // 底栏是拼出来的：导航（每个面板都有）→ 面板自己的能力键 → 列自身的缩放/调宽。
+  // 拼序就是重要性：窄面板从尾部截断（truncate-end），面板键因此不会被列控制挤掉。
+  'panel-hint-focused': { zh: 'Esc 聊天 · ←/→ 切换', en: 'Esc chat · ←/→ panels' },
+  // 声明 capabilities.sendToChat 的面板自己绑 s（btw/jobs 都是）。
+  'panel-hint-send-to-chat': { zh: 's 送聊天', en: 's to chat' },
+  'panel-hint-zoom-width': { zh: 'z 缩放 · +/- 调宽', en: 'z zoom · +/- width' },
   'panel-hint-unfocused': { zh: 'Ctrl+B 聚焦侧栏', en: 'Ctrl+B focus panel' },
   'panel-empty-none': { zh: '没有已启用的面板（/panel manage 管理）', en: 'No enabled panels (/panel manage)' },
   'panel-too-narrow': { zh: '宽度不足（需 ≥ {{min}} 列）', en: 'Too narrow (needs ≥ {{min}} cols)' },

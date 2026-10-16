@@ -41,6 +41,9 @@ export interface BtwThreadSnapshot {
   readonly turns: readonly BtwTurn[]
   readonly activeTurnId: string | null
   readonly draft: string
+  /** 列表选中的轮（`s` 送聊天 / `c` 复制的对象）；null = 跟最后一条。
+   *  与 draft 同理放在 store 里：面板与全屏场景共用同一份选中态。 */
+  readonly selectedTurnId: string | null
   /** seen-through 标尺之后的完成/失败轮（cancelled 不计：用户自己中止，
    * 不是没看到的新答案）。 */
   readonly unread: { readonly count: number; readonly error: boolean }
@@ -67,6 +70,19 @@ export type BtwAskFacade = (
 export type BtwSubmitResult =
   | { readonly ok: true; readonly turnId: string }
   | { readonly ok: false; readonly reason: 'empty' | 'busy' | 'congested' }
+
+/**
+ * 有效选中轮：钉住的 id 还在就继续用它，否则跟最后一条（新轮到达自动跟尾、
+ * 轮被清掉/换话题自动落回）。面板与全屏场景共用这一条解析，保证两个形态
+ * 的选中语义逐字一致。
+ */
+export function effectiveSelectedTurnId(
+  turns: readonly BtwTurn[],
+  pinned: string | null,
+): string | null {
+  if (pinned !== null && turns.some(turn => turn.turnId === pinned)) return pinned
+  return turns.length === 0 ? null : turns[turns.length - 1]!.turnId
+}
 
 /** 钳到 1–8；非有限值取默认 4。 */
 export function normalizeRecentTurnsLimit(value: number | undefined): number {
@@ -131,6 +147,7 @@ interface ThreadRecord {
   generation: number
   turns: BtwTurn[]
   draft: string
+  selectedTurnId: string | null
   seenThroughSeq: number
   version: number
   snapshot: BtwThreadSnapshot
@@ -153,6 +170,7 @@ function buildSnapshot(record: ThreadRecord): BtwThreadSnapshot {
     turns: Object.freeze([...record.turns]),
     activeTurnId: active === null ? null : active.turnId,
     draft: record.draft,
+    selectedTurnId: effectiveSelectedTurnId(record.turns, record.selectedTurnId),
     unread: Object.freeze({ count: unreadCount, error: unreadError }),
     version: record.version,
   })
@@ -214,6 +232,8 @@ class BtwThreadStore {
       omittedOlderCount: selection.omittedOlderCount,
     }
     record.turns.push(turn)
+    // 新轮到达回到跟尾：选中态跟的是「最后一条」，上一轮的钉位不再有意义。
+    record.selectedTurnId = null
     this.bump(record)
 
     const controller = new AbortController()
@@ -292,6 +312,7 @@ class BtwThreadStore {
     record.generation += 1
     record.turns = []
     record.draft = ''
+    record.selectedTurnId = null
     record.seenThroughSeq = this.turnSeq
     this.bump(record)
     return true
@@ -302,6 +323,41 @@ class BtwThreadStore {
     if (record.draft === text) return
     record.draft = text
     this.bump(record)
+  }
+
+  /** 指定选中某一轮（点标题行；null = 回到跟最后一条）。 */
+  select(sessionId: string, turnId: string | null): void {
+    const record = this.recordOf(sessionId)
+    if (record.selectedTurnId === turnId) return
+    record.selectedTurnId = turnId
+    this.bump(record)
+  }
+
+  /** 当前选中轮（实时解析，不依赖渲染期快照）。 */
+  selectedTurn(sessionId: string): BtwTurn | undefined {
+    const record = this.threads.get(sessionId)
+    if (record === undefined) return undefined
+    const id = effectiveSelectedTurnId(record.turns, record.selectedTurnId)
+    return id === null ? undefined : record.turns.find(turn => turn.turnId === id)
+  }
+
+  /**
+   * ↑/↓ 移动选中：从当前有效选中出发、夹在两端（delta = ±1）。落点即钉住，
+   * 所以移动之后不再跟尾；返回新选中轮（线程为空 = undefined）。
+   */
+  moveSelection(sessionId: string, delta: number): BtwTurn | undefined {
+    const record = this.recordOf(sessionId)
+    if (record.turns.length === 0) return undefined
+    const current = effectiveSelectedTurnId(record.turns, record.selectedTurnId)
+    const at = record.turns.findIndex(turn => turn.turnId === current)
+    const from = at === -1 ? record.turns.length - 1 : at
+    const next = Math.min(record.turns.length - 1, Math.max(0, from + delta))
+    const turnId = record.turns[next]!.turnId
+    if (record.selectedTurnId !== turnId) {
+      record.selectedTurnId = turnId
+      this.bump(record)
+    }
+    return record.turns[next]
   }
 
   /** 看到最新线程：把已落定轮全部记为已读（running 轮落定时再见分晓）。 */
@@ -334,6 +390,7 @@ class BtwThreadStore {
         generation: 0,
         turns: [],
         draft: '',
+        selectedTurnId: null,
         seenThroughSeq: this.turnSeq,
         version: 0,
         snapshot: Object.freeze({
@@ -344,6 +401,7 @@ class BtwThreadStore {
           turns: Object.freeze([]),
           activeTurnId: null,
           draft: '',
+          selectedTurnId: null,
           unread: Object.freeze({ count: 0, error: false }),
           version: 0,
         }) as BtwThreadSnapshot,

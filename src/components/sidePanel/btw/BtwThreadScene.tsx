@@ -3,7 +3,9 @@
  * 滚动、composer 追问。Esc 返回侧栏，面板状态原样（mountPolicy=enabled
  * 不卸载，thread 与 draft 都在线程 store）。
  *
- * 键层级：composer 编辑（Esc 收起草稿）> 场景滚动/动作 > Esc 退出场景。
+ * 键层级：composer 编辑（Esc 收起草稿、↑ 上到标题）> 场景动作（↑/↓ 选轮、
+ * s 送聊天/撤回、c 复制）> Esc 退出场景。选中态与侧栏面板同源（线程 store），
+ * 两个形态的键位与落点逐条对齐。
  */
 import React from 'react'
 import { Box, Text, useInput, useTerminalSize, type ScrollBoxHandle } from '../../../ui.js'
@@ -14,13 +16,17 @@ import { btwThreads } from './threads.js'
 import { getBtwContextBudget, getBtwContextTurns } from '../../../tuiDisplayPrefs.js'
 import { BtwComposer, btwComposerKey } from './BtwComposer.js'
 import { BtwThreadView } from './BtwThreadView.js'
+import type { BtwTurn } from './threads.js'
 
 export function BtwThreadScene({
   channel,
   onClose,
+  onFocusChat,
 }: {
   readonly channel: ChannelUi
   readonly onClose: () => void
+  /** 送聊天之后把焦点交回主输入框（宿主没接时只关场景）。 */
+  readonly onFocusChat?: (() => void) | undefined
 }): React.ReactNode {
   const { columns, rows } = useTerminalSize()
   const sessionId = String(channel.agentId)
@@ -36,10 +42,14 @@ export function BtwThreadScene({
   const [notice, setNotice] = React.useState<{ readonly text: string; readonly failure: boolean } | null>(null)
   const scrollRef = React.useRef<ScrollBoxHandle | null>(null)
   const busy = thread !== undefined && thread.activeTurnId !== null
+  // 选中轮与侧栏面板同源（线程 store）：↑/↓ 移动、s 送聊天/撤回、c 复制。
+  const turns = thread?.turns ?? []
+  const selectedId = thread?.selectedTurnId ?? null
+  const selectedTurn = turns.find(turn => turn.turnId === selectedId)
 
-  const attachTurn = React.useCallback((turn: { readonly turnId: string; readonly question: string; readonly answer: string; readonly phase: string }) => {
-    if (turn.phase !== 'completed') return
-    if (typeof channel.attachContext !== 'function') return
+  const attachTurn = React.useCallback((turn: BtwTurn): boolean => {
+    if (turn.phase !== 'completed') return false
+    if (typeof channel.attachContext !== 'function') return false
     channel.attachContext({
       source: 'panel',
       sourceId: turn.turnId,
@@ -51,7 +61,42 @@ export function BtwThreadScene({
       staged?.truncated === true ? t('btw-thread-answer-truncated') : t('btw-thread-answer-attached'),
       { color: 'success' },
     )
+    return true
   }, [channel])
+
+  /**
+   * `s` = 送聊天，再按一次 = 撤回（与侧栏面板、jobs/companion 同一契约）。
+   * 送出去之后这个整屏场景就让位：关掉场景 + 焦点交回主输入框——等价于侧栏
+   * 形态里「面板留着、焦点回到输入框」，两种形态的落点一致。
+   */
+  const sendToChat = React.useCallback((turn: BtwTurn) => {
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: partial fixture channels
+    const staged = (channel.attachedContexts ?? []).find(entry => entry.sourceId === turn.turnId)
+    if (staged !== undefined) {
+      if (typeof channel.detachContext === 'function') channel.detachContext(staged.id)
+      channel.notify(t('panel-context-detached'), { color: 'success' })
+      return
+    }
+    if (!attachTurn(turn)) return
+    onFocusChat?.()
+    onClose()
+  }, [attachTurn, channel, onFocusChat, onClose])
+
+  /** 点标题行：选中那一轮并离开编辑层（高亮只在列表态显示）。 */
+  const selectTurn = React.useCallback((turnId: string) => {
+    btwThreads.select(sessionId, turnId)
+    setComposerFocus(false)
+  }, [sessionId])
+
+  const copySelected = React.useCallback(() => {
+    const turn = btwThreads.selectedTurn(sessionId)
+    const answer = turn !== undefined && turn.answer !== ''
+      ? turn.answer
+      : [...(btwThreads.get(sessionId)?.turns ?? [])].reverse().find(candidate => candidate.phase === 'completed')?.answer
+    if (answer === undefined) return
+    void setClipboard(answer)
+    channel.notify(t('copied-chars', { n: answer.length }), { timeoutMs: 1500 })
+  }, [sessionId, channel])
 
   useInput((input, key, event) => {
     if (composerFocus) {
@@ -86,8 +131,22 @@ export function BtwThreadScene({
       onClose()
       return
     }
-    if (key.upArrow) { scrollRef.current?.scrollBy(-3); event.stopImmediatePropagation(); return }
-    if (key.downArrow) { scrollRef.current?.scrollBy(3); event.stopImmediatePropagation(); return }
+    // ↑/↓ 只挪选中，滚动交给 BtwThreadView 的「最小揭示」（出了视口才滚）。
+    if (key.upArrow) {
+      event.stopImmediatePropagation()
+      btwThreads.moveSelection(sessionId, -1)
+      return
+    }
+    if (key.downArrow) {
+      event.stopImmediatePropagation()
+      const list = btwThreads.get(sessionId)?.turns ?? []
+      const current = btwThreads.selectedTurn(sessionId)
+      const at = current === undefined ? list.length - 1 : list.findIndex(turn => turn.turnId === current.turnId)
+      // 已在最后一条：↓ 回输入框（与输入框里按 ↑ 上到标题互为往返）。
+      if (list.length === 0 || at === list.length - 1) { setComposerFocus(true); return }
+      btwThreads.moveSelection(sessionId, 1)
+      return
+    }
     if (key.pageUp) { scrollRef.current?.scrollBy(-(rows - 4)); event.stopImmediatePropagation(); return }
     if (key.pageDown) { scrollRef.current?.scrollBy(rows - 4); event.stopImmediatePropagation(); return }
     // ink reports a plain Tab as key.tab with an empty input.
@@ -100,17 +159,13 @@ export function BtwThreadScene({
       return
     }
     if (input === 's' && !key.ctrl && !key.meta) {
-      const latest = [...(btwThreads.get(sessionId)?.turns ?? [])].reverse().find(turn => turn.phase === 'completed')
-      if (latest !== undefined) attachTurn(latest)
+      const turn = btwThreads.selectedTurn(sessionId)
+      if (turn !== undefined) sendToChat(turn)
       event.stopImmediatePropagation()
       return
     }
     if (input === 'c' && !key.ctrl && !key.meta) {
-      const latest = [...(btwThreads.get(sessionId)?.turns ?? [])].reverse().find(turn => turn.phase === 'completed')
-      if (latest !== undefined) {
-        void setClipboard(latest.answer)
-        channel.notify(t('copied-chars', { n: latest.answer.length }), { timeoutMs: 1500 })
-      }
+      copySelected()
       event.stopImmediatePropagation()
     }
   })
@@ -126,7 +181,8 @@ export function BtwThreadScene({
         width={columns - 2}
         height={Math.max(3, rows - 4)}
         alive
-        onAttachTurn={attachTurn}
+        selectedTurnId={composerFocus ? undefined : selectedId ?? undefined}
+        onSelectTurn={selectTurn}
         scrollHandleRef={scrollRef}
       />
       <BtwComposer

@@ -6360,6 +6360,9 @@ export function Chat({
       <BtwThreadScene
         channel={channel}
         onClose={() => setBtwSceneOpen(false)}
+        // 送聊天之后整屏场景让位：关场景 + 焦点回主输入框——与侧栏形态里
+        // 「面板留着、焦点回输入框」的落点一致（见 BtwThreadScene.sendToChat）。
+        onFocusChat={sidePanel.focusChat}
       />
     )
     return fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>

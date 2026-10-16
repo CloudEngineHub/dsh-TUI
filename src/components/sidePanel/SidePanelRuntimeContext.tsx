@@ -28,6 +28,11 @@ export interface SidePanelRuntimeContextValue {
    *  未接（或该 Panel 没有整屏形态）时 undefined，按钮照画但点击无效——
    *  宿主是否可展开由 PanelDefinition.capabilities.fullscreen 决定。 */
   readonly openFullscreen?: (panelId: string) => void
+  /** 「回主输入框」出口：Panel 把内容送聊天（attachContext）后把列焦点交回
+   *  聊天——chip 就在眼前、可直接接着打字，toast 里的「Esc 可撤」也立刻
+   *  成立（剥 chip 的那把 Esc 只有主输入框有焦点时才收得到）。宿主
+   *  （PanelHost）从 controller.focusChat 注入；未接时送完焦点不动。 */
+  readonly focusChat?: () => void
 }
 
 export const SidePanelRuntimeContext = React.createContext<SidePanelRuntimeContextValue | null>(null)
@@ -46,6 +51,11 @@ export function useSidePanelTrajectory(): TrajBuild | undefined {
 /** 「全屏」出口：宿主没接时返回 undefined（按钮点击静默无效）。 */
 export function useSidePanelFullscreen(): ((panelId: string) => void) | undefined {
   return React.useContext(SidePanelRuntimeContext)?.openFullscreen
+}
+
+/** 「回主输入框」出口：宿主没接时返回 undefined（送聊天后焦点不动）。 */
+export function useSidePanelFocusChat(): (() => void) | undefined {
+  return React.useContext(SidePanelRuntimeContext)?.focusChat
 }
 
 export const PanelContext = React.createContext<{ readonly panelId: string } | null>(null)

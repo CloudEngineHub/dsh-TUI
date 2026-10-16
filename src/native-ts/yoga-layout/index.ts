@@ -2635,7 +2635,14 @@ function computeFlexBasis(
     ? MeasureMode.Exactly
     : MeasureMode.Undefined
   if (!isDefined(crossConstraint) && isDefined(availableCross)) {
-    crossConstraint = availableCross
+    // 交叉轴空间要减掉子节点自己的交叉轴 margin——布局趟就是这么发的
+    // (`childCrossSize = Math.max(0, innerCrossSize - cMarginCross)`，见本文件
+    // 的 :1998/:2001)。少这一减，列容器里的折行文本会拿「容器内容宽」量出的
+    // 高度当 flex-basis，而它的最终宽度是 content − margin：两者折行行数差 1
+    // 时盒子矮一行，多出的末行被绘制到下一个兄弟（btw 的 ┈ 分割线）那一行再
+    // 被覆盖——就是「分割线吃掉了答案末行」(issue #1526；btw 答案的
+    // marginLeft=2、AutoRecapRow 的 marginLeft=1 都中过)。
+    crossConstraint = Math.max(0, availableCross - childMarginForAxis(child, crossAxis(mainAxis), ownerWidth))
     crossConstraintMode =
       crossMode === MeasureMode.Exactly && isStretchAlign(child)
         ? MeasureMode.Exactly

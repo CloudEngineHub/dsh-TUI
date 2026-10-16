@@ -6,9 +6,8 @@
  * capability. Listeners and the retry timer ride the caller's `ctx.effect`.
  */
 
-import { findPackageJSON } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { componentIdentityOf } from './component-identity.js'
@@ -22,6 +21,19 @@ import { logForDebugging } from '../utils/debug.js'
 const RETRY_INTERVAL_MS = 200
 const RETRY_ATTEMPTS = 100
 
+/**
+ * The Loader's own ESM resolver (`cordis-plugin-loader`'s Node-internals
+ * adapter, or `undefined` when this runtime exposes no internals). Admission
+ * must resolve the entry through it: the Loader's active export conditions and
+ * custom hooks decide which module actually executes, and that module's
+ * manifest owns the identity and permissions.
+ */
+type ActiveResolver =
+  | { readonly version: 'v1'
+      resolveSync(specifier: string, parentURL: string, attributes: object): { readonly url: string } }
+  | { readonly version: 'v2'
+      resolveSync(parentURL: string, request: { specifier: string; attributes: object }): { readonly url: string } }
+
 /** The Cordis loader entry that owns a fiber (`cordis-plugin-loader`). */
 interface LoaderEntryLike {
   readonly options?: { readonly name?: string }
@@ -30,6 +42,7 @@ interface LoaderEntryLike {
 }
 
 interface LoaderLike {
+  readonly internal?: ActiveResolver
   locate?(fiber?: object): string | undefined
   resolve?(id: string): LoaderEntryLike | undefined
   entries?(): Iterable<LoaderEntryLike>
@@ -227,31 +240,35 @@ function manifestPathOf(loader: LoaderLike, fiber: object): string | undefined {
   }
   const name = entry?.options?.name
   if (typeof name !== 'string' || name === '') return undefined
-  const entryFile = resolveEntryFile(name, entry?.ctx?.baseUrl)
+  const entryFile = resolveEntryFile(loader, name, entry?.ctx?.baseUrl)
   return entryFile === undefined ? undefined : findManifest(entryFile)
 }
 
 /** The module file an entry `name` resolves to, following the same rules the
  *  loader's own import uses (file URL, relative to `baseUrl`, bare
  *  specifier relative to the profile). */
-function resolveEntryFile(name: string, baseUrl: string | undefined): string | undefined {
+function resolveEntryFile(loader: LoaderLike, name: string, baseUrl: string | undefined): string | undefined {
   try {
-    // Builtin rows (loader groups, timers) have no package directory.
     if (name.startsWith('cordis:')) return undefined
-    if (name.startsWith('file:')) return fileURLToPath(name)
-    if (isAbsolute(name)) return name
-    if (name.startsWith('.')) {
-      return baseUrl === undefined || baseUrl === '' ? undefined : fileURLToPath(new URL(name, baseUrl))
+    // Use the exact resolver owned by the Loader that executed this entry:
+    // its active conditions and hooks must select the same code and authority.
+    const resolver = loader.internal
+    if (resolver === undefined) {
+      logForDebugging('dsh-tui: admission skipped — the Loader ESM resolver is unavailable; refusing to guess component identity')
+      return undefined
     }
-    // Through the package's own resolution: `exports` need not list
-    // `./package.json`, and a subpath (`pkg/sub`) lands on the same root.
-    return findPackageJSON(name, requireBase(baseUrl))
+    const parent = moduleBase(baseUrl).href
+    const resolved = resolver.version === 'v1'
+      ? resolver.resolveSync(name, parent, {})
+      : resolver.resolveSync(parent, { specifier: name, attributes: {} })
+    return fileURLToPath(resolved.url)
   } catch {
     return undefined
   }
 }
 
-function requireBase(baseUrl: string | undefined): string | URL {
+
+function moduleBase(baseUrl: string | undefined): URL {
   if (baseUrl === undefined || baseUrl === '') return pathToFileURL(join(process.cwd(), 'index.js'))
   try {
     return baseUrl.startsWith('file:') ? new URL(baseUrl) : pathToFileURL(join(baseUrl, 'index.js'))
@@ -260,16 +277,19 @@ function requireBase(baseUrl: string | undefined): string | URL {
   }
 }
 
-/** Walk up from the entry module to its package root. The walk stops at the
- *  first `package.json`: a manifest lives at the package root, never deeper,
- *  so DSH's own rows (a `package.json` one level up from their entry) cost
- *  one lookup instead of a climb to the filesystem root. */
+/** Walk up from the entry module to its package root. A manifest counts only
+ *  beside the `package.json` that establishes that root: a stray copy deeper
+ *  in the tree (a build output directory, say) must not claim an outer
+ *  package's code for its own identity. The walk stops at the first
+ *  `package.json`, so DSH's own rows (a `package.json` one level up from
+ *  their entry) cost one lookup instead of a climb to the filesystem root. */
 function findManifest(from: string): string | undefined {
   let dir = dirname(resolvePath(from))
   for (let depth = 0; depth < 64; depth += 1) {
-    const candidate = join(dir, 'dsh-plugin.json')
-    if (existsSync(candidate)) return candidate
-    if (existsSync(join(dir, 'package.json'))) return undefined
+    if (existsSync(join(dir, 'package.json'))) {
+      const candidate = join(dir, 'dsh-plugin.json')
+      return existsSync(candidate) ? candidate : undefined
+    }
     const parent = dirname(dir)
     if (parent === dir) return undefined
     dir = parent

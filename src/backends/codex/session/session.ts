@@ -24,7 +24,7 @@ import type { AgentEvent, AgentEventMeta } from '../../../agent/events.js'
 import type { AgentSessionRef } from '../../../agent/refs.js'
 import type { AgentInput, AgentSession, AgentSessionStatus, CancelCause, SubmitPlacement } from '../../../agent/session.js'
 import { codexText, installCodexLocale } from '../text.js'
-import { CODEX_BACKEND_ID, codexVersionDrift, VALIDATED_CODEX_VERSIONS } from '../contract.js'
+import { CODEX_BACKEND_ID, codexVersionDrift, compareCodexVersions, MIN_CODEX_BEFORE_TURN_FORK_VERSION, parseCodexVersion, VALIDATED_CODEX_VERSIONS } from '../contract.js'
 import { CODEX_MODE_PARAMS, DEFAULT_CODEX_MODE, isCodexModeId, modeIdOf } from '../modes.js'
 import { arr, errorText, num, rec, str, text, type Rec } from '../narrow.js'
 import { CLIENT, NOTIFY } from '../protocol/index.js'
@@ -702,12 +702,21 @@ export async function openCodexSession(deps: CodexSessionDeps): Promise<AgentSes
           if (selected === undefined) return { kind: 'refused', reason: codexText('codex-anchor-missing') }
           if (input.busy()) return { kind: 'refused', reason: codexText('codex-command-idle') }
           const previous = history.previousTurnId(anchor)
-          const retained = history.turns
-          const index = retained.findIndex(turn => str(turn.id) === selected)
-          if (previous === undefined && (index < 0 || history.capability.hasOlder())) return { kind: 'refused', reason: codexText('codex-rewind-load-older') }
-          const response = rec(await hub.call(previous === undefined ? CLIENT.threadStart : CLIENT.threadFork, previous === undefined
-            ? { cwd: opened.cwd, ...resumeOverrides() }
-            : { threadId, lastTurnId: previous, excludeTurns: true, ...resumeOverrides() }))
+          // A daemon may differ from the local CLI. Use the live handshake,
+          // and never let an unknown/old server ignore the cutoff silently.
+          const serverVersion = parseCodexVersion(hub.info?.userAgent ?? '')
+          if (previous === undefined && (serverVersion === undefined || (compareCodexVersions(serverVersion, MIN_CODEX_BEFORE_TURN_FORK_VERSION) ?? -1) < 0)) {
+            return { kind: 'refused', reason: codexText('codex-rewind-upgrade', { min: MIN_CODEX_BEFORE_TURN_FORK_VERSION }) }
+          }
+          // Codex can cut before a known turn even when its predecessor is
+          // not loaded or retained locally. For the first turn this persists
+          // an empty branch; a turnless thread/start cannot be resumed.
+          const response = rec(await hub.call(CLIENT.threadFork, {
+            threadId,
+            ...(previous === undefined ? { beforeTurnId: selected } : { lastTurnId: previous }),
+            excludeTurns: true,
+            ...resumeOverrides(),
+          }))
           const id = str(rec(response?.thread)?.id)
           if (id === undefined) throw new Error(codexText('codex-open-failed', { err: 'no thread id' }))
           await hub.call(CLIENT.threadUnsubscribe, { threadId: id })

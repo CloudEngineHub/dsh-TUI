@@ -88,6 +88,18 @@ export function SidePanelColumn({ width, controller, channel, activity, attentio
   // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: partial fixture channels
   const trajectoryUnsupported = controller.activePanelId === 'trajectory' && channel.trajectorySource?.() === 'unsupported'
   const canExpand = activeEntry?.definition.capabilities?.fullscreen === true && onExpand !== undefined && !trajectoryUnsupported
+  // 底栏拼序 = 重要性：导航 → 面板自己绑的键 → 列控制。宿主不点名任何面板：
+  // 面板经 panelStore 广告自己此刻的键位（例如 btw 在编辑层只说「↑ 回标题」、
+  // 在列表层才说 s/c），没广告过的才退回能力位那一段。窄面板从尾部截断，所以
+  // 面板键排在列控制前；未聚焦时面板收不到按键，那一格继续只说怎么把焦点拿过来。
+  const panelSegment = activeEntry === undefined
+    ? ''
+    : activeEntry.hint !== undefined
+      ? activeEntry.hint
+      : activeEntry.definition.capabilities?.sendToChat === true ? t('panel-hint-send-to-chat') : ''
+  const focusedHint = t('panel-hint-focused')
+    + (panelSegment === '' ? '' : ' · ' + panelSegment)
+    + ' · ' + t('panel-hint-zoom-width')
   // 标签点击与 ←/→ 宿主键走同一条路（openPanel 会顺带把焦点给右栏）。
   const onSelectPanel = React.useCallback(
     (id: string) => { controller.openPanel(id, { focus: true }) },
@@ -128,7 +140,7 @@ export function SidePanelColumn({ width, controller, channel, activity, attentio
       <Rule focused={focused} />
       <Box height={1} flexShrink={0} paddingX={1} overflow="hidden">
         <Text dimColor wrap="truncate-end">
-          {focused ? t('panel-hint-focused') : t('panel-hint-unfocused')}
+          {focused ? focusedHint : t('panel-hint-unfocused')}
         </Text>
       </Box>
     </Box>

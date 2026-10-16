@@ -79,6 +79,12 @@ export interface PanelEntry {
   /** 同 id 重注册时递增，用于重挂 error boundary。 */
   readonly registrationId: number
   readonly badge: PanelBadge | null
+  /**
+   * 面板自己广告的键位片段（底栏用）。`''` = 面板明确「此刻没有要广告的键」
+   * （底栏连能力位那一段也不画）；没设置过则由底栏按 capabilities 兜底。
+   * 层内状态（编辑层 vs 列表层）只有面板自己知道，所以由面板发、宿主只拼。
+   */
+  readonly hint?: string
   readonly lastError: { readonly message: string; readonly at: number } | null
   /** 插件 Panel 连续崩溃后本会话内禁用（PanelHost 渲染禁用卡）。 */
   readonly disabled?: boolean

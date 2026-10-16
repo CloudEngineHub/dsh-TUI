@@ -23,6 +23,7 @@ export type PanelStoreEvent =
   | { readonly type: 'registered'; readonly id: string }
   | { readonly type: 'unregistered'; readonly id: string }
   | { readonly type: 'badge'; readonly id: string }
+  | { readonly type: 'hint'; readonly id: string }
   | { readonly type: 'error'; readonly id: string }
   | { readonly type: 'disabled'; readonly id: string }
 
@@ -92,6 +93,17 @@ export class PanelStore {
     const next: PanelBadge | null = badge === null ? null : { level: badge.level, unread, latestAt: Date.now() }
     this.entries.set(id, { ...entry, badge: next })
     this.emit({ type: 'badge', id })
+  }
+
+  /**
+   * 面板广告自己当前的键位片段（见 PanelEntry.hint）。每次 channel delta 都会
+   * 有适配器调 setBadge，这里同理按值短路：没变就不通知宿主重渲染。
+   */
+  setHint(id: string, hint: string): void {
+    const entry = this.entries.get(id)
+    if (entry === undefined || entry.hint === hint) return
+    this.entries.set(id, { ...entry, hint })
+    this.emit({ type: 'hint', id })
   }
 
   clearBadge(id: string): void {

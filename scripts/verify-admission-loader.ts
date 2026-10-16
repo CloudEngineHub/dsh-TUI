@@ -8,11 +8,13 @@
  * Run: node --import tsx/esm scripts/verify-admission-loader.ts
  */
 import { findPackageJSON } from 'node:module'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import './lib/fake-home.mjs' // 必须最先：DATA_DIR/effect-ledger 在 import 时定死
+import { settled } from './lib/term-test.mjs'
 
 const { Context } = await import('@deepseek-ai/cordis')
 const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
@@ -84,6 +86,9 @@ export default function thirdParty(ctx, config) {
 
 /** A minimal Community v0.15 package: manifest + entry that registers a panel. */
 function writePackage(id: string): string {
+  // Every real plugin package carries a package.json, and the manifest is only
+  // recognised beside the package boundary that establishes the entry's root.
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: 'verify-absolute-' + id, version: '0.1.0', type: 'module' }, null, 2))
   writeFileSync(join(packageDir, 'dsh-plugin.json'), manifestOf(id))
   writeFileSync(join(packageDir, 'main.js'), ENTRY_SOURCE)
   return join(packageDir, 'main.js')
@@ -127,6 +132,29 @@ async function activate(composition: MountedComposition, id: string): Promise<st
   // 固定窗:pacing 行 apply 后的落盘报告没有可轮询锚点（reportedIds 要等 appendFileSync）
   await sleep(400)
   return readFileSync(composition.report, 'utf8')
+}
+
+// Run in a fresh Node process: conditions must be active before ESM initialization.
+const CONDITION = 'dsh-tui-admission-verify'
+if (process.env.DSH_TUI_ADMISSION_CONDITION_CHILD === '1') {
+  const outer = join(loadRoot, 'node_modules', '@dsh-tui-verify', 'conditioned')
+  const inner = join(outer, 'panel')
+  mkdirSync(inner, { recursive: true })
+  writeFileSync(join(outer, 'package.json'), JSON.stringify({ name: '@dsh-tui-verify/conditioned', type: 'module',
+    exports: { './panel': { [CONDITION]: './active.js', import: './panel/index.js' } } }))
+  writeFileSync(join(outer, 'dsh-plugin.json'), manifestOf('verify-active-condition'))
+  writeFileSync(join(outer, 'active.js'), ENTRY_SOURCE)
+  writeFileSync(join(inner, 'package.json'), JSON.stringify({ name: 'verify-default-condition', type: 'module' }))
+  writeFileSync(join(inner, 'dsh-plugin.json'), manifestOf('verify-default-condition'))
+  writeFileSync(join(inner, 'index.js'), ENTRY_SOURCE)
+  const composition = await mount(true, undefined, true, LOAD_BASE_URL)
+  try {
+    await composition.root.loader.create({ id: 'conditioned', name: '@dsh-tui-verify/conditioned/panel', config: { report: composition.report } })
+    await composition.root.loader.await()
+    const applied = await settled(() => reportedIds(composition.report).length > 0)
+    check('active condition: execution and admission select the same component', applied && reportedIds(composition.report)[0] === 'verify-active-condition:demo', JSON.stringify(reportedIds(composition.report)))
+  } finally { await composition.root.fiber.dispose(); rmSync(dir, { recursive: true, force: true }) }
+  process.exit(failed === 0 ? 0 : 1)
 }
 
 // ── control: no admission loader armed ────────────────────────────────────
@@ -229,6 +257,80 @@ for (const [name, manifestId] of [[BARE_PACKAGE, 'verify-bare'], [EXPORTS_PACKAG
   check(`bare specifier ${name}: the row applied and registered its panel`, bareIds.length === 1, JSON.stringify(bareIds))
   check(`bare specifier ${name}: the manifest id is found through the package-root walk`,
     bareIds.length === 1 && bareIds[0] === `${manifestId}:demo`, JSON.stringify(bareIds))
+}
+
+// Exported subcomponents must use the nearest package manifest, just like an absolute entry.
+// A require-condition decoy ensures admission follows the module actually imported by the Loader.
+for (const dual of [false, true]) {
+  const suffix = dual ? 'dual' : 'default'
+  const bareName = '@dsh-tui-verify/component-' + suffix
+  const outer = join(loadRoot, 'node_modules', '@dsh-tui-verify', 'component-' + suffix)
+  const inner = join(outer, 'panel')
+  const decoy = join(outer, 'require-panel')
+  mkdirSync(inner, { recursive: true }); mkdirSync(decoy, { recursive: true })
+  writeFileSync(join(outer, 'package.json'), JSON.stringify({ name: bareName, version: '0.1.0', type: 'module',
+    exports: { './panel': dual ? { import: './panel/index.js', require: './require-panel/index.cjs' } : './panel/index.js' } }))
+  writeFileSync(join(outer, 'dsh-plugin.json'), manifestOf('verify-outer-' + suffix))
+  writeFileSync(join(inner, 'package.json'), JSON.stringify({ name: 'verify-inner-' + suffix, type: 'module' }))
+  writeFileSync(join(inner, 'dsh-plugin.json'), manifestOf('verify-inner-' + suffix))
+  writeFileSync(join(inner, 'index.js'), ENTRY_SOURCE)
+  writeFileSync(join(decoy, 'package.json'), JSON.stringify({ name: 'verify-require-' + suffix, type: 'commonjs' }))
+  writeFileSync(join(decoy, 'dsh-plugin.json'), manifestOf('verify-require-' + suffix))
+  writeFileSync(join(decoy, 'index.cjs'), 'module.exports = {}')
+  const composition = await mount(true, undefined, true, LOAD_BASE_URL)
+  try {
+    await composition.root.loader.create({ id: 'component-' + suffix, name: bareName + '/panel', config: { report: composition.report } })
+    await composition.root.loader.await()
+    check('exported subcomponent ' + suffix + ': admitted before apply under its own manifest',
+      await settled(() => reportedIds(composition.report).includes('verify-inner-' + suffix + ':demo')),
+      JSON.stringify(reportedIds(composition.report)))
+  } finally { await composition.root.fiber.dispose() }
+}
+
+for (const source of ['cli', 'environment']) {
+  const option = '--conditions=' + CONDITION
+  const child = spawnSync(process.execPath, [...(source === 'cli' ? [option] : []), '--import', 'tsx/esm', fileURLToPath(import.meta.url)], {
+    cwd: dirname(dirname(fileURLToPath(import.meta.url))), encoding: 'utf8', timeout: 20000,
+    env: { ...process.env, DSH_TUI_ADMISSION_CONDITION_CHILD: '1',
+      ...(source === 'environment' ? { NODE_OPTIONS: [process.env.NODE_OPTIONS, option].filter(Boolean).join(' ') } : {}) },
+  })
+  check('custom export conditions from ' + source + ' match Loader execution', child.status === 0, child.stdout + child.stderr)
+}
+
+for (const boundary of [false, true]) {
+  const suffix = boundary ? 'nested-package' : 'outer-package'
+  const outer = join(loadRoot, 'node_modules', '@dsh-tui-verify', suffix)
+  const entryDir = join(outer, ...(boundary ? ['panel', 'dist'] : ['dist']))
+  mkdirSync(entryDir, { recursive: true })
+  writeFileSync(join(outer, 'package.json'), JSON.stringify({ name: '@dsh-tui-verify/' + suffix, type: 'module', exports: { './panel': './' + (boundary ? 'panel/' : '') + 'dist/index.js' } }))
+  writeFileSync(join(outer, 'dsh-plugin.json'), manifestOf('verify-root-' + suffix))
+  if (boundary) writeFileSync(join(outer, 'panel', 'package.json'), JSON.stringify({ name: 'verify-boundary', type: 'module' }))
+  writeFileSync(join(entryDir, 'dsh-plugin.json'), manifestOf('verify-stray-' + suffix))
+  writeFileSync(join(entryDir, 'index.js'), ENTRY_SOURCE)
+  const composition = await mount(true, undefined, true, LOAD_BASE_URL)
+  try {
+    await composition.root.loader.create({ id: suffix, name: '@dsh-tui-verify/' + suffix + '/panel', config: { report: composition.report } })
+    await composition.root.loader.await()
+    const applied = await settled(() => reportedIds(composition.report).length > 0)
+    const id = reportedIds(composition.report)[0] ?? ''
+    check('stray manifest: ' + suffix + ' respects the nearest package boundary', applied && (boundary ? /^act\d+:demo$/u.test(id) : id === 'verify-root-' + suffix + ':demo'), id)
+  } finally { await composition.root.fiber.dispose() }
+}
+
+// The optional Loader adapter may be absent. Execution can continue, but no
+// guessed manifest may claim an identity or permissions for that activation.
+const withoutResolver = await mount(true)
+const savedResolver = withoutResolver.root.loader.internal
+withoutResolver.root.loader.internal = undefined
+try {
+  const name = pathToFileURL(writePackage('verify-without-resolver')).href
+  await withoutResolver.root.loader.create({ id: 'without-resolver', name, config: { report: withoutResolver.report } })
+  await withoutResolver.root.loader.await()
+  const applied = await settled(() => reportedIds(withoutResolver.report).length > 0)
+  check('missing active resolver: execution continues without guessed component authority', applied && /^act\d+:demo$/u.test(reportedIds(withoutResolver.report)[0] ?? ''), JSON.stringify(reportedIds(withoutResolver.report)))
+} finally {
+  withoutResolver.root.loader.internal = savedResolver
+  await withoutResolver.root.fiber.dispose()
 }
 
 // ── host-missing: bounded retry, then settle + loud diagnostic ────────────
