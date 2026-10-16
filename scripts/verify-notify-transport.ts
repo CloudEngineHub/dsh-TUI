@@ -47,7 +47,6 @@ const {
   shouldYieldToExternalNotifier,
   toastHostSpawnOptions,
   toastXml,
-  windowsToastAvailability,
 } = await import('../src/ink/terminal-notification-windows.js')
 
 /** The title the renderer passes today (`src/i18n.ts`, AC-1). */
@@ -391,27 +390,6 @@ await check('every registry write targets this module\'s own HKCU keys', async (
     assert.ok(write.key.startsWith('HKCU\\Software\\Classes\\'), `${write.key} is outside the user's own classes hive`)
     assert.equal(write.key, AUMID_REGISTRY_KEY, `${write.key} is not one of the documented keys`)
   }
-})
-
-await check('the caller can ask whether the transport is usable without side effects', () => {
-  // The shared entry point is what a caller without ports reaches; only its
-  // platform gate is asserted through it, because its environment is the host's
-  // (a missing %WINDIR% is a real answer since F5, so the two cases that need
-  // in-box tools come from an injected environment).
-  assert.deepEqual(windowsToastAvailability({ platform: 'darwin' }), { available: false, reason: 'not-win32' })
-  const noHost = harness({ env: {} })
-  assert.deepEqual(
-    noHost.transport.available(),
-    { available: false, reason: 'system-root-missing', detail: '%WINDIR% is not set, so reg.exe and powershell.exe cannot be located' },
-    'a "yes" here must not promise a toast no in-box host can render',
-  )
-  const h = harness()
-  assert.deepEqual(
-    h.transport.available({ profilePackageJsonPath: profileWith({ [EXTERNAL_NOTIFIER_PACKAGES[0]]: '^1.0.0' }) }),
-    { available: false, reason: 'yielded' },
-    'a profile that already runs a notifier owns the completion',
-  )
-  assert.deepEqual(h.transport.available({ profilePackageJsonPath: profileWith(undefined) }), { available: true })
 })
 
 await check('the default registry port drives in-box reg.exe against our own key', async () => {

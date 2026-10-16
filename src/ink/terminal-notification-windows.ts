@@ -2,8 +2,7 @@
  * The Windows toast transport (DESIGN D3/D4/D8/D10/D11/D12): the only place the
  * renderer talks to the Windows shell about task-completion notifications.
  *
- * It answers three questions, and a caller should not need anything else:
- *   - can this process show a native toast?      {@link windowsToastAvailability}
+ * It answers two questions, and a caller should not need anything else:
  *   - show one                                  {@link notifyWindowsToast}
  *   - is an external notifier already doing it? {@link shouldYieldToExternalNotifier}
  *
@@ -368,8 +367,6 @@ export interface WindowsToastAvailabilityQuery {
 }
 
 export interface WindowsToastTransport {
-  /** Side-effect free: registration stays lazy, so this never touches the registry. */
-  available(query?: WindowsToastAvailabilityQuery): WindowsToastAvailability
   /** Dedup, register, show. Never rejects: the caller treats this as fire-and-forget. */
   notify(input: WindowsToastInput): Promise<WindowsToastResult>
 }
@@ -409,8 +406,8 @@ type Registration =
 
 /**
  * Create a transport with its own registration state. Production shares one
- * instance through {@link windowsToastAvailability}/{@link notifyWindowsToast},
- * because "the AUMID is registered" is a per-process fact (D11).
+ * instance through {@link notifyWindowsToast}, because "the AUMID is registered"
+ * is a per-process fact (D11).
  * @param options Ports and paths; every one of them has a production default.
  * @returns The transport.
  */
@@ -491,7 +488,6 @@ export function createWindowsToastTransport(options: WindowsToastTransportOption
   }
 
   return {
-    available,
     async notify(input: WindowsToastInput): Promise<WindowsToastResult> {
       try {
         const judgement = available({ profilePackageJsonPath: input.profilePackageJsonPath })
@@ -596,15 +592,6 @@ function describe(error: unknown): string {
 // --- the shared instance ------------------------------------------------------
 
 let shared: WindowsToastTransport | undefined
-
-/**
- * Ask whether a native toast is possible, without any side effect.
- * @param query Platform override and/or the profile document (D8).
- * @returns Whether a toast can be attempted, and why not when it cannot.
- */
-export function windowsToastAvailability(query: WindowsToastAvailabilityQuery = {}): WindowsToastAvailability {
-  return (shared ??= createWindowsToastTransport()).available(query)
-}
 
 /**
  * Show one task-completion toast: stand down for an external notifier, register
