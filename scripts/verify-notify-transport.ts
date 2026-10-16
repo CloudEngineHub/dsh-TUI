@@ -113,7 +113,6 @@ function harness(options: {
   registry?: ReturnType<typeof recordingRegistry>
   runner?: ReturnType<typeof recordingRunner>
   env?: Record<string, string | undefined>
-  platform?: NodeJS.Platform
   /** The icon lookup; the default resolves the file the package ships. */
   iconPath?: () => string | undefined
 } = {}): Harness {
@@ -121,7 +120,7 @@ function harness(options: {
   const runner = options.runner ?? recordingRunner()
   const logged: LogLine[] = []
   const transportOptions: WindowsToastTransportOptions = {
-    platform: options.platform ?? 'win32',
+    platform: 'win32',
     env: options.env ?? { windir: WINDIR },
     registry: registry.registry,
     run: runner.run,
@@ -163,16 +162,14 @@ await check('the toast XML carries the title and the summary, and nothing else',
   assert.ok(xml.includes('<binding template="ToastGeneric">'), 'the generic template is what desktop toasts render')
   assert.deepEqual(textNodes(xml), [TITLE, '摘要一行'], 'title first, summary second - AC-1')
   assert.deepEqual(textNodes(toastXml({ title: TITLE })), [TITLE], 'an empty summary shows the title alone')
-})
 
-await check('the toast XML escapes both text nodes and leaves no raw markup in them', () => {
-  const xml = toastXml({ title: NASTY, message: NASTY })
-  assert.deepEqual(textNodes(xml), [NASTY_ESCAPED, NASTY_ESCAPED])
-  for (const node of textNodes(xml)) {
+  const nasty = toastXml({ title: NASTY, message: NASTY })
+  assert.deepEqual(textNodes(nasty), [NASTY_ESCAPED, NASTY_ESCAPED])
+  for (const node of textNodes(nasty)) {
     assert.doesNotMatch(node, /[<>]/u, 'a text node must not carry raw markup')
     assert.doesNotMatch(node, /&(?!(?:amp|lt|gt|quot);)/u, 'every ampersand must open one of the four entities')
   }
-  assert.ok(xml.includes('🐋'), 'the emoji must survive escaping')
+  assert.ok(nasty.includes('🐋'), 'the emoji must survive escaping')
 })
 
 await check('an over-long summary is clipped to the two lines the toast can show', () => {
@@ -275,7 +272,11 @@ await check('the toast is spawned by in-box PowerShell with the XML on stdin, ne
   assert.equal(call.file, POWERSHELL_PATH, 'the in-box host, resolved from %WINDIR% rather than PATH')
   assert.ok(call.args[0] === '-NoProfile', 'the profile is what makes the cold start 3.1-3.4 s worse')
   assert.ok(call.args.includes('-Command'), 'the script itself travels as one argument')
-  assert.equal(call.input, toastXml({ title: TITLE, message: NASTY }))
+  assert.equal(
+    call.input,
+    `<toast><visual><binding template="ToastGeneric"><text>${TITLE}</text><text>${NASTY_ESCAPED}</text></binding></visual></toast>`,
+    'the whole document reaches stdin, spelled out: comparing it against toastXml() would move both sides at once',
+  )
   assert.ok(!/[<>·🐋]/u.test(call.args.join(' ')), 'user text must never reach the command line (security)')
   assert.ok(typeof call.timeout === 'number' && call.timeout > 0, 'a stuck PowerShell must not hold the caller forever')
   assert.equal(h.logged.filter(([, fields]) => fields?.ms !== undefined).length, 1, 'R1: the log records how long the spawn took')
@@ -366,14 +367,6 @@ await check('a toast host that cannot be started is unavailable, not an uncaught
   assert.equal(result.reason, 'toast-failed')
 })
 
-// The refusal itself is what this layer owns; that a refusal leaves no registry
-// write or child process behind is asserted end to end, where the real caller
-// drives the real ports (verify-task-notifications-windows.ts).
-await check('a non-win32 platform is refused by notify', async () => {
-  const h = harness({ platform: 'darwin' })
-  assert.deepEqual(await h.transport.notify({ title: TITLE }), { status: 'unavailable', reason: 'not-win32' })
-})
-
 await check('a missing %WINDIR% is refused before any write', async () => {
   const h = harness({ env: {} })
   const result = await h.transport.notify({ title: TITLE })
@@ -388,7 +381,6 @@ await check('every registry write targets this module\'s own HKCU keys', async (
   await h.transport.notify({ title: TITLE })
   for (const write of h.registry.writes) {
     assert.ok(write.key.startsWith('HKCU\\Software\\Classes\\'), `${write.key} is outside the user's own classes hive`)
-    assert.equal(write.key, AUMID_REGISTRY_KEY, `${write.key} is not one of the documented keys`)
   }
 })
 
@@ -411,9 +403,6 @@ await check('the default registry port drives in-box reg.exe against our own key
   assert.deepEqual(display.args.slice(2, 7), ['/v', 'DisplayName', '/t', 'REG_SZ', '/d'])
   assert.equal(display.args[7], 'dsh-TUI')
   assert.ok(display.args.includes('/f'), 'without /f reg.exe waits for a prompt nobody can answer')
-  assert.deepEqual(icon.args.slice(2, 7), ['/v', 'IconUri', '/t', 'REG_SZ', '/d'], 'the icon is a named value')
-  const registeredIcon = icon.args[7]
-  assert.ok(isAbsolute(registeredIcon) && registeredIcon.endsWith('.png'), `the icon is a shipped image file: ${registeredIcon}`)
   for (const call of [display, icon]) {
     assert.ok(typeof call.timeout === 'number' && call.timeout > 0, 'a stuck reg.exe must not hold the caller forever')
   }

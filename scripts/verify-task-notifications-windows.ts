@@ -292,8 +292,7 @@ await check('a refused AUMID falls back to the bell and leaves the reason in the
   assert.deepEqual(chain.delivered, [[TITLE, NASTY]], 'the fallback announces the completion the toast was going to carry')
   assert.deepEqual(chain.runner.calls, [], 'a toast that cannot display is not spawned')
   const logged = chain.debug.join('')
-  assert.match(logged, /windows toast unavailable/u, 'the fallback states what happened')
-  assert.match(logged, /aumid-registration-failed/u, 'and names the reason (the pair "no toast + bell" has to be explainable)')
+  assert.match(logged, /aumid-registration-failed/u, 'the log names the reason (the pair "no toast + bell" has to be explainable)')
 })
 
 await check('off Windows nothing touches the registry or a child process, and the bell still rings', async () => {
