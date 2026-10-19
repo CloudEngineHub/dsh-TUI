@@ -223,13 +223,14 @@ export const SETTING_DEFINITIONS = {
     label: 'Notification method',
     descriptions: { zh: '通知方式' },
     group: 'conversation',
-    hint: 'Auto uses separate title/body notifications on Ghostty and WezTerm (OSC 777) and Kitty (OSC 99). iTerm2 and Warp use OSC 9 with a title prefix; other terminals ring the bell. Explicit OSC 9 also uses the title prefix. Delivery depends on terminal settings. In tmux, OSC notifications need allow-passthrough on. Applies immediately.',
-    hintDescriptions: { zh: '自动：Ghostty、WezTerm 使用 OSC 777，Kitty 使用 OSC 99，分别显示标题与正文；iTerm2、Warp 使用 OSC 9，将标题放在正文前；其他终端响铃。显式 OSC 9 同样使用标题前缀。实际提醒取决于终端设置；tmux 中 OSC 通知需要开启 allow-passthrough。立即生效。' },
+    hint: 'Auto uses a native toast in local Windows sessions and the client terminal protocol over SSH. Ghostty/WezTerm use OSC 777, Kitty OSC 99, and iTerm2/Warp OSC 9 with a title prefix; other terminals ring the bell. Explicit Windows uses a toast on the Windows host, including over SSH. The first toast registers a per-user HKCU ID and can take about 3 seconds. It yields only for DSH sessions with an enabled, active cc-dsh-notifier; a failed toast falls back to the bell. Terminal settings still apply; tmux OSC notifications need allow-passthrough. Applies immediately.',
+    hintDescriptions: { zh: '自动：Windows 本地会话用系统 toast，SSH 会话改走客户端终端协议。Ghostty/WezTerm 用 OSC 777，Kitty 用 OSC 99，iTerm2/Warp 用带标题前缀的 OSC 9，其他终端响铃。显式 Windows 仍在 Windows 主机弹窗，包括 SSH。首次 toast 会注册当前用户的 HKCU 标识，约延迟 3 秒；仅 DSH 会话遇到已启用、正在运行的 cc-dsh-notifier 时让位；弹窗失败回落响铃。实际效果依终端设置；tmux 的 OSC 通知需 allow-passthrough。立即生效。' },
     kind: 'select',
     options: [
       { value: 'auto', label: 'Auto', descriptions: { zh: '自动' } },
       { value: 'osc9', label: 'OSC 9', descriptions: { zh: 'OSC 9' } },
       { value: 'bel', label: 'Terminal bell', descriptions: { zh: '终端响铃' } },
+      { value: 'windows', label: 'Windows notification', descriptions: { zh: 'Windows 原生通知' } },
     ],
   },
   'pageMargin': {
