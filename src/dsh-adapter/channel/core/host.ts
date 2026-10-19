@@ -149,28 +149,24 @@ const BRANCH_HEAD_POLL_MS = 1000
 const HEAD_SEARCH_DEPTH = 8
 
 /**
- * The `HEAD` file of the repository containing `cwd`, or undefined when this
- * process cannot see one. A linked worktree (like a submodule) keeps its git
- * dir outside the worktree and records that indirection in `.git` as a
- * `gitdir:` line instead of a directory.
- *
- * Reached from the timer path, so it answers rather than throws: no checkout,
- * a malformed `.git` file and an unreadable directory all land on undefined and
- * leave the poll silent.
+ * The `HEAD` file of the repository containing `cwd` (a linked worktree or a
+ * submodule points at its git dir through a `gitdir:` line in `.git`), or
+ * undefined when this process cannot see one. Reached from the timer path, so
+ * it answers rather than throws: a missing or malformed `.git` lands on
+ * undefined and leaves the poll silent.
  */
 function gitHeadPath(cwd: string): string | undefined {
   try {
     let dir = cwd
     for (let depth = 0; depth < HEAD_SEARCH_DEPTH; depth += 1) {
       const dotGit = join(dir, '.git')
-      // The no-entry form keeps the common "not below a repository" walk out
-      // of the exception path; only an unexpected filesystem error is caught.
+      // Keeps the common "not in a repository" walk out of the exception path;
+      // only a real filesystem error is caught.
       const entry = statSync(dotGit, { throwIfNoEntry: false })
       if (entry?.isDirectory()) return join(dotGit, 'HEAD')
       if (entry?.isFile()) {
         const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'))?.[1]
-        // A relative target resolves against the directory holding the `.git`
-        // file, which is the base git itself records it against.
+        // Git records the target relative to the directory holding `.git`.
         if (target === undefined) return undefined
         return join(resolve(dirname(dotGit), target.trim()), 'HEAD')
       }
@@ -201,20 +197,17 @@ function readHeadSignature(headPath: string | undefined): string | undefined {
  * lands on a different cwd (/resume, /workspace, issue #96) so the
  * breadcrumb never shows the previous workspace's branch.
  *
- * Adoption is not the only way the branch changes: a `git checkout` in
- * another terminal leaves this process nothing to observe otherwise, so the
- * refresher also follows the workspace's own `.git/HEAD` and re-probes when
- * its content changes. Polling, not `fs.watch`, for the reason the grant
- * store already documents: a watcher can keep following a replaced inode,
- * and `gitdir:` indirection, network mounts and watch limits each need their
- * own fallback. The signature is the file's text, not its mtime: timestamp
- * granularity is coarse and differs per filesystem, while HEAD is well under
- * 100 bytes and says exactly what a checkout changed.
+ * Adoption is not the only way the branch changes: a checkout in another
+ * terminal has to be seen through the workspace's own `.git/HEAD`, whose text
+ * is re-probed when it changes. Polling rather than `fs.watch` follows the
+ * grant store (a watcher can outlive a replaced inode, and `gitdir:`
+ * indirection, network mounts and watch limits each need their own fallback);
+ * the text is the signature, not the mtime, because timestamp granularity
+ * differs per filesystem while HEAD is well under 100 bytes.
  *
- * Where the host shell runs somewhere else (remote or sandboxed workspace),
- * this process's `.git` is not the workspace's: without a HEAD to anchor on
- * the poll stays quiet and the breadcrumb keeps whatever the shell last
- * reported, rather than clearing a value it cannot verify.
+ * Where the host shell runs elsewhere (remote or sandboxed workspace), this
+ * process's `.git` is not the workspace's: with no HEAD to anchor on the poll
+ * stays quiet instead of clearing a value it cannot verify.
  */
 export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   owner: Pick<ChannelOwner, 'current' | 'own'>
@@ -243,14 +236,12 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   }
 
   const probe = (clearFirst: boolean): void => {
-    // The adoption path clears first so a switch never shows the previous
-    // workspace's branch. A poll does not: the value still belongs to this
-    // workspace, and blanking it across the round trip would paint a gap on
-    // the next unrelated redraw.
+    // Adoption clears first so a switch never shows the previous workspace's
+    // branch; a poll keeps the value, so an unrelated redraw during the round
+    // trip cannot paint a gap.
     if (clearFirst) state.gitBranch = undefined
-    // Baseline taken when the probe is issued: a checkout landing while the
-    // shell runs then still differs from this text and triggers the next
-    // tick instead of hiding behind a signature already consumed.
+    // Baseline at issue time: a checkout landing while the shell runs still
+    // differs from it and triggers the next tick.
     signature = readHeadSignature(resolveHead())
     const shell = ctx.get('shell') as ForegroundShell | undefined
     if (!shell) return
@@ -258,8 +249,8 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     // flight refreshes the branch for the new cwd, so a late reply from the
     // old workspace must be dropped (stale statusline, issue #96).
     const requestedCwd = state.cwd
-    // Two probes can be in flight at once (the shell does not serialize them),
-    // so each takes a ticket and only the newest one speaks for the workspace.
+    // Two probes can be in flight (the shell does not serialize them); only
+    // the newest one speaks for the workspace.
     const ticket = ++issued
     void runForegroundShell(shell, {
       command: 'git branch --show-current',
@@ -267,19 +258,16 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
       timeoutMs: 3000,
     })
       .then((result) => {
-        // The newer probe already speaks for the workspace and its baseline
-        // matches the current HEAD, so nothing would re-probe after this
-        // reply: a slower older one would pin a branch no longer checked out.
+        // A newer probe already speaks for the workspace and its baseline
+        // matches HEAD, so nothing would re-probe after this slower reply.
         if (ticket !== issued) return
-        // A timed-out probe reports whatever it managed to capture, often
-        // nothing. That is not "no branch": clearing on it would blank the
-        // breadcrumb while the consumed signature keeps the next tick quiet.
+        // A timed-out probe reports whatever it captured, often nothing: that
+        // is not "no branch", and the consumed signature would keep us quiet.
         if (result.timedOut) return
         if (!deps.owner.current() || state.cwd !== requestedCwd) return
         const branch = result.stdout.text.trim()
         // A detached HEAD (or a cwd outside any repository) answers nothing:
-        // clear it instead of keeping a branch that is no longer checked out,
-        // which is also what a cold start would show.
+        // clear it, which is also what a cold start would show.
         const next = branch === '' ? undefined : branch
         if (next === state.gitBranch) return
         state.gitBranch = next
