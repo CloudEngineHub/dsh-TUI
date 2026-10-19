@@ -30,7 +30,7 @@
 
 import { closeSync, openSync, readSync, statSync, watchFile } from 'node:fs'
 import { Buffer } from 'node:buffer'
-import { createIncrementalTail, scanChunk } from './lib/decode-osc7501.mjs'
+import { createIncrementalTail, escapeForDisplay, scanChunk } from './lib/decode-osc7501.mjs'
 
 let printed = 0
 let rejected = 0
@@ -98,13 +98,15 @@ if (target === '-') {
     let stats
     try {
       stats = statSync(target)
-    } catch {
+    } catch (error) {
+      if (!follow) throw error
       // 路径不在了：旧句柄指的是已删除的 inode，留着它只会让「新文件恰好
       // 复用同一 inode」被误判成没换过。丢掉句柄并要求复位。
       closeTarget()
       pendingSize = 0
       return true
     }
+    if (!stats.isFile()) throw new Error('输入不是普通文件')
     const key = `${stats.dev}:${stats.ino}`
     const rotated = descriptor >= 0 && key !== descriptorKey
     if (rotated) closeTarget()
@@ -130,21 +132,29 @@ if (target === '-') {
     try {
       if (checkTarget()) tail.reset()
       printEntries(tail.poll())
-    } catch {
+    } catch (error) {
+      if (!follow) throw error
       // 文件暂时读不到（还没建出来 / 已被删掉）：当作没有新内容。
     }
   }
 
-  poll()
   if (follow) {
-    console.log(`跟踪 ${target}（Ctrl+C 退出）…\n`)
+    poll()
+    console.log(`跟踪 ${escapeForDisplay(target)}（Ctrl+C 退出）…\n`)
     watchFile(target, { interval: 200 }, poll)
   } else {
-    closeTarget()
-    console.log(summary())
-    if (printed === 0) {
-      console.log('没有抓到 OSC 7501。检查：dsh-tui 是否真的在 pty 里跑过（stdout 必须是 TTY），')
-      console.log('以及 DSH_TUI_PROGRAM_STATUS 未被设为 0/false/no/off。')
+    try {
+      poll()
+      console.log(summary())
+      if (printed === 0) {
+        console.log('没有抓到 OSC 7501。检查：dsh-tui 是否真的在 pty 里跑过（stdout 必须是 TTY），')
+        console.log('以及 DSH_TUI_PROGRAM_STATUS 未被设为 0/false/no/off。')
+      }
+    } catch (error) {
+      console.error(`无法读取 ${escapeForDisplay(target)}：${escapeForDisplay(error instanceof Error ? error.message : String(error))}`)
+      process.exitCode = 1
+    } finally {
+      closeTarget()
     }
   }
 }

@@ -69,8 +69,8 @@ export type ProgramStatusInput = {
  *
  * Precedence mirrors the UI: a parked prompt is `blocked`, a running turn is
  * `working`, a turn that just ended is `done`/`error`, and otherwise `idle`.
- * Reports are deduplicated on the serialized sequence, so re-renders do not
- * spam the terminal.
+ * Reports are deduplicated within the same live turn, so re-renders do not
+ * spam the terminal or hide another turn with the same outcome.
  *
  * Two deliberate omissions, both from the spec and confirmed by the shipped
  * implementations (Gradle, Tuist, opentui, Reasonix):
@@ -85,9 +85,8 @@ export type ProgramStatusInput = {
  */
 export function useProgramStatus(input: ProgramStatusInput): void {
   const writeRaw = useContext(TerminalWriteContext)
-  // Last sequence written, so an unchanged state writes nothing. Reset when
-  // reporting turns off so a later re-enable re-establishes the record.
-  const lastSequenceRef = useRef<string>('')
+  // An unchanged render writes nothing; a new live end still gets a report.
+  const lastReportRef = useRef<{ sequence: string; liveTurnEnds: number } | undefined>(undefined)
   // Whether a turn was observed running since the current session was adopted,
   // tagged with the session it belongs to. A projected outcome is PERSISTED
   // state: a resumed session can still carry its previous turn's outcome, and
@@ -113,6 +112,7 @@ export function useProgramStatus(input: ProgramStatusInput): void {
     // outcome now describes that session's past, not work observed in this one.
     if (latchRef.current.sessionId !== sessionId || latchRef.current.generation !== agentBindingGeneration) {
       latchRef.current = { sessionId, generation: agentBindingGeneration, sawWorking: false }
+      lastReportRef.current = undefined
     }
     // A synchronous start/end batch or a resumed running turn may finish
     // before `working=true` renders; live ends still differ from history.
@@ -145,8 +145,9 @@ export function useProgramStatus(input: ProgramStatusInput): void {
       ...(kind === undefined ? {} : { kind }),
       ...(msg === undefined ? {} : { msg }),
     })
-    if (sequence === '' || sequence === lastSequenceRef.current) return
-    lastSequenceRef.current = sequence
+    const lastReport = lastReportRef.current
+    if (sequence === '' || (sequence === lastReport?.sequence && liveTurnEnds === lastReport?.liveTurnEnds)) return
+    lastReportRef.current = { sequence, liveTurnEnds }
     writeRaw(sequence)
   }, [enabled, working, turnOutcome, liveTurnEnds, agentBindingGeneration, blocked, sessionTitle, writeRaw, sessionId])
 }

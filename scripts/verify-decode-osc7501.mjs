@@ -141,6 +141,14 @@ check('非 base64 与非法 UTF-8 也被拒绝', () => {
   }
 })
 
+check('合法 UTF-8 中的 U+FFFD 原样解码，不冒充解码失败', () => {
+  const text = 'value\ufffd'
+  assert.equal(decodeBase64(B64(text)), text)
+  const report = interpretReport(`state=done:title=${B64(text)}:msg=${B64(text)}`)
+  assert.equal(report.ok, true)
+  assert.ok(report.line.includes(`title="${text}"`) && report.line.includes(`msg="${text}"`))
+})
+
 check('state / app / id / 未知键 / 探测文本里的控制字符被转义展示', () => {
   const { entries } = scanChunk(SEQ('state=work\x01ing:app=a\x02b:id=c\x03d:nu\x04ll=1\x05'))
   assert.equal(entries.length, 1)
@@ -169,13 +177,13 @@ check('转义表覆盖 C0/DEL/C1 的每一个码位', () => {
   assert.equal(escapeForDisplay('世界'), '世界')
 })
 
-check('Unicode 格式控制符转成可见证据，不改变展示方向或隐藏文本', () => {
-  const format = '\u202e\u2066\u200b\u{e0001}'
-  assert.equal(escapeForDisplay(format), '\\u{202e}\\u{2066}\\u{200b}\\u{e0001}')
+check('Unicode 格式符与行/段分隔符转成可见的一行证据', () => {
+  const format = '\u202e\u2066\u200b\u{e0001}\u2028\u2029'
+  assert.equal(escapeForDisplay(format), '\\u{202e}\\u{2066}\\u{200b}\\u{e0001}\\u{2028}\\u{2029}')
   const { entries } = scanChunk(SEQ(`state=done:app=${format}:title=${B64(format)}`))
   assert.equal(entries[0].ok, true)
-  assert.ok(!/\p{Cf}/u.test(entries[0].line))
-  assert.match(entries[0].line, /title="\\u\{202e\}\\u\{2066\}\\u\{200b\}\\u\{e0001\}"/)
+  assert.ok(!/[\p{Cf}\u2028\u2029]/u.test(entries[0].line))
+  assert.match(entries[0].line, /title="\\u\{202e\}\\u\{2066\}\\u\{200b\}\\u\{e0001\}\\u\{2028\}\\u\{2029\}"/)
 })
 
 check('恶意语料的每一条输出都不含可执行控制字节', () => {
@@ -319,6 +327,16 @@ try {
     assert.ok(!fileRun.stdout.includes('\x1b'), 'stdout 出现了 ESC')
     assert.ok(!NO_CONTROL.test(fileRun.stdout), `stdout 出现控制字符：${JSON.stringify(fileRun.stdout)}`)
   })
+
+  for (const target of [join(dir, 'missing.log'), dir]) {
+    const run = spawnSync(process.execPath, [SCRIPT, target], { encoding: 'utf8' })
+    check(`一次读取失败必须非零退出，不能冒充零条序列：${target === dir ? '目录' : '不存在'}`, () => {
+      assert.equal(run.status, 1, run.stderr)
+      assert.ok(run.stderr.length > 0, '读取失败没有诊断')
+      assert.ok(!run.stdout.includes('共 0 条 OSC 7501 序列'))
+      assert.ok(!NO_CONTROL.test(run.stderr), '错误诊断含控制字符')
+    })
+  }
 
   const stdinRun = spawnSync(process.execPath, [SCRIPT, '-'], { encoding: 'utf8', input: hostileLog() })
   check('stdin 入口：同样安全，且报告不因跨 chunk 断裂', () => {

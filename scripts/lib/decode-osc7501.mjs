@@ -14,7 +14,7 @@
  *     `escapeForDisplay()` 转成可见转义再展示。
  */
 
-import { Buffer } from 'node:buffer'
+import { Buffer, isUtf8 } from 'node:buffer'
 
 /** 报告起始：`ESC ] 7501 ;`。 */
 export const REPORT_PREFIX = '\x1b]7501;'
@@ -54,12 +54,12 @@ export function hasControlChar(text) {
 }
 
 /**
- * 把不可信文本转成「只含可见字符」的一行：控制字符写成 `\e`/`\n`/`\xNN`，格式符写成 `\u{…}`，
+ * 把不可信文本转成「只含可见字符」的一行：控制字符写成 `\e`/`\n`/`\xNN`，格式符与行/段分隔符写成 `\u{…}`，
  * 其余原样。这是本模块唯一的输出通道，任何来自报告的字段都必须先过这里。
  */
 export function escapeForDisplay(text) {
   let out = ''
-  for (const char of text.replace(/\p{Cf}/gu, char => `\\u{${char.codePointAt(0).toString(16)}}`)) {
+  for (const char of text.replace(/[\p{Cf}\u2028\u2029]/gu, char => `\\u{${char.codePointAt(0).toString(16)}}`)) {
     const code = char.codePointAt(0) ?? 0
     if ((code >= 0x20 && code < 0x7f) || code > 0x9f) {
       out += char
@@ -72,15 +72,15 @@ export function escapeForDisplay(text) {
 
 /**
  * 规范的 base64（UTF-8 文本，padding 可省）。解不出返回 `null`：字符集不合法、
- * 长度不可能、或字节不是合法 UTF-8（否则会得到 U+FFFD 这种「看起来能显示」
- * 的假结果）。空串解出空串。
+ * 长度不可能、或字节不是合法 UTF-8。直接校验字节，不能把合法的 U+FFFD
+ * 误当成解码失败。空串解出空串。
  */
 export function decodeBase64(text) {
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(text)) return null
   const body = text.replace(/=+$/u, '')
   if (body.length % 4 === 1) return null
-  const decoded = Buffer.from(body, 'base64').toString('utf8')
-  return decoded.includes('\ufffd') ? null : decoded
+  const decoded = Buffer.from(body, 'base64')
+  return isUtf8(decoded) ? decoded.toString('utf8') : null
 }
 
 /** 把一条报告 body 解析成 `key=value` 对；没有 `=` 或空键的 pair 按规范跳过。 */

@@ -133,6 +133,13 @@ check('sanitized text never round-trips an escape sequence', () => {
   assert.ok(!decoded.includes('\x1b'))
 })
 
+check('status text removes bidi overrides and isolates while preserving RTL text and emoji', () => {
+  const out = programStatus({ state: 'blocked', app: 'dsh-tui', title: 'safe\u202eexe\u202c', msg: '\u2066approve\u2069 שלום 👩‍💻' })
+  const text = (key: string) => Buffer.from(new RegExp(`${key}=([A-Za-z0-9+/=]*)`).exec(out)?.[1] ?? '', 'base64').toString('utf8')
+  assert.equal(text('title'), 'safe exe')
+  assert.equal(text('msg'), 'approve שלום 👩‍💻')
+})
+
 check('msg is truncated to the protocol cap without splitting a code point', () => {
   // 4 bytes per emoji: 2048 decoded bytes fits 512 of them exactly; the
   // encoded budget is the binding one here.
@@ -441,6 +448,10 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
   const { instance, set, reports } = mountHook(statusInput({ liveTurnEnds: 1, turnOutcome: 'completed' }))
   await flush()
   assert.match(reports().at(-1)!, /^state=done:/, 'a live startup turn may finish before the first render')
+  const beforeRebind = reports().length
+  set(statusInput({ agentBindingGeneration: 1, liveTurnEnds: 1, turnOutcome: 'completed' }))
+  await flush()
+  assert.equal(reports().length, beforeRebind + 1, 'a new binding must not deduplicate the same count and outcome from the old binding')
   set(statusInput({ sessionId: 's2', agentBindingGeneration: 1, liveTurnEnds: 1, turnOutcome: 'error' }))
   await flush()
   assert.match(reports().at(-1)!, /^state=error:/, 'a newly bound session may finish before its first render')
@@ -541,6 +552,18 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
       { type: 'turn.end', turn: 1, reason, time: 1002 },
     ])
     assert.equal(batched.reports().at(-1), `state=${reason.kind === 'error' ? 'error' : 'done'}:app=dsh-tui:title=c2Vzcw==`)
+    const before = batched.reports().length
+    await batched.fold([
+      ...user('batch-u2', 2, 2),
+      { type: 'turn.end', turn: 2, reason, time: 1004 },
+    ])
+    check(`a second fast ${reason.kind} is reported even when its serialized outcome is unchanged`, () => {
+      assert.equal(batched.reports().length, before + 1)
+      assert.equal(batched.reports().at(-1), batched.reports().at(-2))
+    })
+    const after = batched.reports().length
+    await batched.fold([])
+    assert.equal(batched.reports().length, after, 'an unchanged completed turn must still be deduplicated')
     batched.unmount()
   }
   console.log('  ok - a live start/end batch reports its outcome without an intermediate working frame')

@@ -96,12 +96,14 @@ export type ProgramStatusRecord = {
  * Control characters (C0/C1, DEL) and line breaks would be rejected by a
  * conforming terminal and can smuggle sequence boundaries, so they are
  * dropped rather than escaped — there is no escape mechanism in the format.
+ * Bidi overrides and isolates are also removed to keep untrusted labels
+ * from changing the direction of surrounding status text.
  * @param text - untrusted text (session titles, tool commands, model output).
  * @returns the text with control characters and line breaks removed.
  */
 export function sanitizeProgramText(text: string): string {
   // eslint-disable-next-line no-control-regex
-  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim()
+  return text.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 /**
