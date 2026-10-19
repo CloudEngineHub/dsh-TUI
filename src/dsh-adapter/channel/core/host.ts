@@ -6,7 +6,7 @@
  * changes, and the git-branch breadcrumb. Each lookup degrades when its row
  * is not mounted, whatever backend serves the session.
  */
-import { readFileSync, statSync } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { AdapterRuntimeOptions } from '../../../adapter/kernel/runtime.js'
 import { readGrantStore } from '../../../adapter/standard/grants.js'
@@ -145,8 +145,6 @@ export function startHostSubscriptions(
 
 /** How often the workspace HEAD is read for a signature change. */
 const BRANCH_HEAD_POLL_MS = 1000
-/** How far above the session cwd a repository root is looked for. */
-const HEAD_SEARCH_DEPTH = 8
 
 /**
  * The `HEAD` file of the repository containing `cwd` (a linked worktree or a
@@ -155,17 +153,18 @@ const HEAD_SEARCH_DEPTH = 8
  * it answers rather than throws: a missing or malformed `.git` lands on
  * undefined and leaves the poll silent.
  */
-function gitHeadPath(cwd: string): string | undefined {
+async function gitHeadPath(cwd: string): Promise<string | undefined> {
   try {
     let dir = cwd
-    for (let depth = 0; depth < HEAD_SEARCH_DEPTH; depth += 1) {
+    for (;;) {
       const dotGit = join(dir, '.git')
-      // Keeps the common "not in a repository" walk out of the exception path;
-      // only a real filesystem error is caught.
-      const entry = statSync(dotGit, { throwIfNoEntry: false })
+      const entry = await stat(dotGit).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined
+        throw error
+      })
       if (entry?.isDirectory()) return join(dotGit, 'HEAD')
       if (entry?.isFile()) {
-        const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'))?.[1]
+        const target = /^gitdir:\s*(.+)$/m.exec(await readFile(dotGit, 'utf8'))?.[1]
         // Git records the target relative to the directory holding `.git`.
         if (target === undefined) return undefined
         return join(resolve(dirname(dotGit), target.trim()), 'HEAD')
@@ -178,14 +177,13 @@ function gitHeadPath(cwd: string): string | undefined {
   } catch {
     return undefined
   }
-  return undefined
 }
 
 /** The HEAD text a probe is anchored on; undefined when there is nothing to read. */
-function readHeadSignature(headPath: string | undefined): string | undefined {
+async function readHeadSignature(headPath: string | undefined): Promise<string | undefined> {
   if (headPath === undefined) return undefined
   try {
-    return readFileSync(headPath, 'utf8').trim()
+    return (await readFile(headPath, 'utf8')).trim()
   } catch {
     return undefined
   }
@@ -217,44 +215,57 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   noteBranch?(branch: string): void
 }): () => void {
   const { state } = deps
-  /** The cached resolution, so only a workspace switch re-walks to the repo. */
-  let headCwd: string | undefined
-  let headPath: string | undefined
   /** The HEAD text the last probe was issued against. */
   let signature: string | undefined
   /** A transient failure retries the same HEAD on the next poll. */
   let retryProbe = false
   /** Tickets handed out to probes; only the newest holder may publish. */
   let issued = 0
+  /** Slow filesystem reads never accumulate more than one periodic sample. */
+  let polling = false
 
-  const resolveHead = (): string | undefined => {
-    const cwd = state.cwd
-    if (cwd === headCwd) return headPath
-    headCwd = cwd
-    headPath = gitHeadPath(cwd)
-    // Another workspace has no signature here yet, so its next tick probes.
-    signature = undefined
-    return headPath
-  }
-
-  const probe = (clearFirst: boolean): void => {
+  const probe = async (clearFirst: boolean): Promise<void> => {
     // Adoption clears first so a switch never shows the previous workspace's
     // branch; a poll keeps the value, so an unrelated redraw during the round
     // trip cannot paint a gap.
-    if (clearFirst) state.gitBranch = undefined
+    if (clearFirst) {
+      state.gitBranch = undefined
+      signature = undefined
+      issued += 1
+    }
+    const requestedCwd = state.cwd
+    const readTicket = issued
+    // Resolve on every sample: git init and a retargeted .git file can change
+    // the repository without changing cwd. Async reads leave the UI runnable.
+    const observed = await readHeadSignature(await gitHeadPath(requestedCwd))
+    if (readTicket !== issued || !deps.owner.current() || state.cwd !== requestedCwd) return
+    if (!clearFirst) {
+      if (observed === undefined) {
+        // A previously visible HEAD disappeared. Invalidate pending replies;
+        // a workspace whose HEAD was never readable keeps its shell-only value.
+        if (signature === undefined) return
+        signature = undefined
+        retryProbe = false
+        issued += 1
+        if (state.gitBranch === undefined) return
+        state.gitBranch = undefined
+        state.emit()
+        return
+      }
+      if (observed === signature && !retryProbe) return
+    }
     // Baseline at issue time: a checkout landing while the shell runs still
     // differs from it and triggers the next tick.
-    signature = readHeadSignature(resolveHead())
+    signature = observed
     retryProbe = false
     const shell = ctx.get('shell') as ForegroundShell | undefined
     if (!shell) return
     // Capture the requested cwd: a /resume landing while this query is in
     // flight refreshes the branch for the new cwd, so a late reply from the
     // old workspace must be dropped (stale statusline, issue #96).
-    const requestedCwd = state.cwd
     // Two probes can be in flight (the shell does not serialize them); only
     // the newest one speaks for the workspace.
-    const ticket = ++issued
+    const ticket = clearFirst ? readTicket : ++issued
     void runForegroundShell(shell, {
       command: 'git branch --show-current',
       workdir: requestedCwd,
@@ -272,6 +283,15 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
           return
         }
         const branch = result.stdout.text.trim()
+        // A B -> C -> B checkout can return C while both polls saw B. Compare
+        // the shell reply to the symbolic HEAD, not just two equal snapshots.
+        const expectedBranch = observed?.startsWith('ref:')
+          ? /^ref:\s+refs\/heads\/(.+)$/.exec(observed)?.[1]
+          : observed === undefined ? undefined : '' // A detached HEAD has no branch.
+        if (expectedBranch !== undefined && branch !== expectedBranch) {
+          retryProbe = true
+          return
+        }
         // A detached HEAD (or a cwd outside any repository) answers nothing:
         // clear it, which is also what a cold start would show.
         const next = branch === '' ? undefined : branch
@@ -289,27 +309,14 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   }
 
   const timer = setInterval(() => {
-    if (!deps.owner.current()) return
-    const next = readHeadSignature(resolveHead())
-    if (next === undefined) {
-      // The HEAD this process was following is gone (repository removed, .git
-      // unreadable), so stop claiming a branch it can no longer verify. A
-      // workspace whose HEAD was never readable stays quiet instead: that is
-      // the remote or sandboxed case, where the shell is the only authority.
-      if (signature === undefined) return
-      signature = undefined
-      retryProbe = false
-      issued += 1
-      if (state.gitBranch === undefined) return
-      state.gitBranch = undefined
-      state.emit()
-      return
-    }
-    if (next === signature && !retryProbe) return
-    probe(false)
+    if (!deps.owner.current() || polling) return
+    polling = true
+    // Only the filesystem sample is single-flight: a slow shell reply must
+    // not prevent a later tick from noticing another checkout or removal.
+    void probe(false).finally(() => { polling = false })
   }, BRANCH_HEAD_POLL_MS)
   timer.unref?.()
   deps.owner.own(() => clearInterval(timer))
 
-  return () => { probe(true) }
+  return () => { void probe(true) }
 }

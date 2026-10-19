@@ -23,13 +23,18 @@
  *   submodule;
  * - a reply from an older probe that lands after a newer one does not
  *   overwrite the newer branch;
- * - a failed probe retries, and a reply after HEAD disappears stays discarded.
+ * - a failed or mismatched probe retries, and a reply after HEAD disappears
+ *   stays discarded, including a B-C-B checkout between polls;
+ * - deep cwd paths, git init, and gitdir retargeting stay observable;
+ * - slow async reads do not pile up or escape a released owner or changed cwd.
  *
  * Reads the compiled output, so `pnpm compile` must have produced `lib/types/`:
  *   node scripts/verify-git-branch-refresh.mjs
  */
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import fs from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { settled, sleep } from './lib/term-test.mjs'
@@ -89,6 +94,31 @@ function makeSubmodule() {
   return { cwd, gitdir }
 }
 
+/** Hold one real file's async results; every other filesystem read stays real. */
+function holdHeadReads(headPath) {
+  const original = fs.readFile
+  let reads = 0
+  let completed = 0
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  fs.readFile = async (...args) => {
+    const result = await original(...args)
+    if (args[0] === headPath) {
+      reads += 1
+      await gate
+      completed += 1
+    }
+    return result
+  }
+  syncBuiltinESMExports()
+  return {
+    reads: () => reads,
+    completed: () => completed,
+    release,
+    restore() { release(); fs.readFile = original; syncBuiltinESMExports() },
+  }
+}
+
 /**
  * A channel over `cwd` whose host shell answers `git branch --show-current`
  * with the test's current text. `probes` records every `resolve()` call, so a
@@ -119,10 +149,10 @@ function openChannel(cwd, branch) {
       else open()
       return {
         async result() {
-          await gate
+          const delivered = await gate
           if (parked) parkedReplies += 1
           if (failure === 'reject') throw new Error('temporary shell failure')
-          return { stdout: { text: reply }, stderr: { text: '' }, timedOut: failure === 'timeout' }
+          return { stdout: { text: delivered ?? reply }, stderr: { text: '' }, timedOut: failure === 'timeout' }
         },
       }
     },
@@ -331,6 +361,101 @@ try {
 
   await gitdirScenario('a linked worktree follows its git dir HEAD', makeLinkedWorktree())
   await gitdirScenario('a relative gitdir file resolves against the worktree', makeSubmodule())
+
+  const deepRepo = makeRepo()
+  const deepCwd = join(deepRepo, ...Array.from({ length: 10 }, (_, index) => `level-${index}`))
+  mkdirSync(deepCwd, { recursive: true })
+  await scenario('a cwd more than eight levels below the repo follows HEAD', { cwd: deepCwd, branch: 'main' }, async ({ channel, answer }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    answer('deep-branch')
+    writeFileSync(join(deepRepo, '.git', 'HEAD'), HEAD_REF('deep-branch'))
+    assert.ok(await settled(() => channel.gitBranch === 'deep-branch', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the poll must find every repository the initial git command can find')
+  })
+
+  const initializedRepo = tempDir('dsh-tui-late-init-')
+  await scenario('git init after startup becomes observable at the same cwd', { cwd: initializedRepo, branch: '' }, async ({ channel, answer, probes }) => {
+    assert.ok(await settled(() => probes.length === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+    mkdirSync(join(initializedRepo, '.git'))
+    writeFileSync(join(initializedRepo, '.git', 'HEAD'), HEAD_REF('initialized'))
+    answer('initialized')
+    assert.ok(await settled(() => channel.gitBranch === 'initialized', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'a missing .git must not be cached for the lifetime of the channel')
+  })
+
+  const movedWorktree = makeLinkedWorktree()
+  await scenario('a retargeted gitdir is followed even while the old HEAD exists', { cwd: movedWorktree.cwd, branch: 'main' }, async ({ channel, answer }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    const newGitdir = tempDir('dsh-tui-retargeted-gitdir-')
+    writeFileSync(join(newGitdir, 'HEAD'), HEAD_REF('retargeted'))
+    writeFileSync(join(movedWorktree.cwd, '.git'), `gitdir: ${newGitdir.replaceAll('\\', '/')}\n`)
+    answer('retargeted')
+    assert.ok(await settled(() => channel.gitBranch === 'retargeted', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'a .git pointer change must invalidate the previous target without requiring its deletion')
+  })
+
+  for (const [name, baseline, branch] of [
+    ['B-C-B', HEAD_REF('branch-b'), 'branch-b'],
+    ['detached-C-detached', HEAD_DETACHED, ''],
+  ]) {
+    const abaRepo = makeRepo()
+    await scenario(`a ${name} checkout cannot publish a reply for transient C`, { cwd: abaRepo, branch: 'main' }, async ({ channel, answer, hold, gates, parkedReplies }) => {
+      assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+      hold()
+      answer(branch)
+      writeFileSync(join(abaRepo, '.git', 'HEAD'), baseline)
+      assert.ok(await settled(() => gates.length === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+      // Git can execute after the probe was issued. It reads C, but another
+      // checkout restores the baseline before the handler or next poll runs.
+      writeFileSync(join(abaRepo, '.git', 'HEAD'), HEAD_REF('transient-c'))
+      gates[0]('transient-c')
+      writeFileSync(join(abaRepo, '.git', 'HEAD'), baseline)
+      assert.ok(await settled(() => parkedReplies() === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+      assert.equal(channel.gitBranch, 'main', 'a reply that disagrees with the observed HEAD must stay unpublished')
+      assert.ok(await settled(() => gates.length === 2, { timeoutMs: DETECT_TIMEOUT_MS }),
+        'the unchanged baseline still needs a retry after the mismatched reply')
+      gates[1]()
+      assert.ok(await settled(() => channel.gitBranch === (branch || undefined), { timeoutMs: DETECT_TIMEOUT_MS }))
+    })
+  }
+
+  const slowRepo = makeRepo()
+  await scenario('one slow HEAD read stays bounded and cannot probe after release', { cwd: slowRepo, branch: 'main' }, async ({ channel, answer, probes }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    const held = holdHeadReads(join(slowRepo, '.git', 'HEAD'))
+    try {
+      answer('after-read')
+      writeFileSync(join(slowRepo, '.git', 'HEAD'), HEAD_REF('after-read'))
+      assert.ok(await settled(() => held.reads() === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+      // 固定窗:探针 keep one read pending across multiple ticks to prove no queue accumulates
+      await sleep(POLL_WINDOW_MS * 2)
+      assert.equal(held.reads(), 1, 'a slow filesystem must not accumulate periodic reads')
+      channel.releaseContributions()
+      const probesAtRelease = probes.length
+      held.release()
+      assert.ok(await settled(() => held.completed() === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+      assert.equal(probes.length, probesAtRelease, 'a released owner must discard the pending read before probing')
+      assert.equal(channel.gitBranch, 'main', 'the completed read must not mutate a released channel')
+    } finally { held.restore() }
+  })
+
+  const staleReadRepo = makeRepo()
+  const destinationRepo = makeRepo()
+  writeFileSync(join(destinationRepo, '.git', 'HEAD'), HEAD_REF('destination'))
+  await scenario('a HEAD read completing after cwd changes cannot probe the old workspace', { cwd: staleReadRepo, branch: 'main' }, async ({ channel, answer, probes }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    const held = holdHeadReads(join(staleReadRepo, '.git', 'HEAD'))
+    try {
+      writeFileSync(join(staleReadRepo, '.git', 'HEAD'), HEAD_REF('stale-read'))
+      assert.ok(await settled(() => held.reads() === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+      channel.cwd = destinationRepo
+      answer('destination')
+      held.release()
+      assert.ok(await settled(() => channel.gitBranch === 'destination', { timeoutMs: DETECT_TIMEOUT_MS }))
+      assert.ok(probes.slice(1).every(probe => probe.workdir === destinationRepo),
+        'a read started at the old cwd must not issue a shell query after the switch')
+    } finally { held.restore() }
+  })
 } finally {
   for (const dir of scratch) rmSync(dir, { recursive: true, force: true })
 }
