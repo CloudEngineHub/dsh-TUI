@@ -37,7 +37,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { closeSync, constants, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, constants, mkdirSync, mkdtempSync, openSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -449,6 +449,30 @@ try {
   await gitdirScenario('a linked worktree follows its git dir HEAD', makeLinkedWorktree())
   await gitdirScenario('a relative gitdir file resolves against the worktree', makeSubmodule())
 
+  if (process.platform === 'win32') {
+    console.log('SKIP a legacy symlink HEAD follows the branch target: POSIX file-symlink fixture')
+  } else {
+    const legacyRepo = tempDir('dsh-tui-legacy-head-')
+    const git = (...args) => execFileSync('git', ['-C', legacyRepo, ...args], { encoding: 'utf8' }).trim()
+    git('init', '--quiet', '--initial-branch=main')
+    git('-c', 'user.name=Regression Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '--no-gpg-sign', '--allow-empty', '-m', 'local fixture')
+    git('branch', 'legacy-feature')
+    git('config', 'core.preferSymlinkRefs', 'true')
+    git('symbolic-ref', 'HEAD', 'refs/heads/main')
+    await scenario('a legacy symlink HEAD follows its branch target even at the same commit', { cwd: legacyRepo, branch: git('branch', '--show-current') }, async ({ channel, answer }) => {
+      assert.equal(readlinkSync(join(legacyRepo, '.git', 'HEAD')), 'refs/heads/main')
+      const commit = git('rev-parse', 'HEAD')
+      assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
+        'Git symbolic HEAD links must not be misclassified as detached hashes')
+      git('switch', '--quiet', 'legacy-feature')
+      assert.equal(readlinkSync(join(legacyRepo, '.git', 'HEAD')), 'refs/heads/legacy-feature')
+      assert.equal(git('rev-parse', 'HEAD'), commit, 'the branch target changes while the dereferenced hash stays the same')
+      answer(git('branch', '--show-current'))
+      assert.ok(await settled(() => channel.gitBranch === 'legacy-feature', { timeoutMs: DETECT_TIMEOUT_MS }),
+        'the symlink target must be the symbolic HEAD signature')
+    })
+  }
+
   const deepRepo = makeRepo()
   const deepCwd = join(deepRepo, ...Array.from({ length: 10 }, (_, index) => `level-${index}`))
   mkdirSync(deepCwd, { recursive: true })
@@ -570,6 +594,28 @@ try {
     setShellAvailable(true)
     assert.ok(await settled(() => channel.gitBranch === 'remounted', { timeoutMs: DETECT_TIMEOUT_MS }),
       'a service remount must recover without another checkout')
+  })
+
+  const pendingMissingRepo = makeRepo()
+  await scenario('a HEAD change without a shell invalidates a pending older reply', { cwd: pendingMissingRepo, branch: 'main' }, async ({ channel, answer, hold, gates, parkedReplies, setShellAvailable, missingShellLookups }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    hold()
+    answer('pending-a')
+    writeFileSync(join(pendingMissingRepo, '.git', 'HEAD'), HEAD_REF('pending-a'))
+    assert.ok(await settled(() => gates.length === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+    setShellAvailable(false)
+    answer('current-b')
+    writeFileSync(join(pendingMissingRepo, '.git', 'HEAD'), HEAD_REF('current-b'))
+    assert.ok(await settled(() => missingShellLookups() > 0, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the newer HEAD must encounter the absent service before the old reply lands')
+    gates[0]()
+    assert.ok(await settled(() => parkedReplies() === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+    assert.equal(channel.gitBranch, 'main', 'a reply for A must not publish after the sampler has seen B')
+    setShellAvailable(true)
+    assert.ok(await settled(() => gates.length === 2, { timeoutMs: DETECT_TIMEOUT_MS }))
+    gates[1]()
+    assert.ok(await settled(() => channel.gitBranch === 'current-b', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the service remount must still recover B without another HEAD change')
   })
 
   for (const metadata of ['HEAD', 'gitdir']) {

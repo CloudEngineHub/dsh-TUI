@@ -6,7 +6,7 @@
  * changes, and the git-branch breadcrumb. Each lookup degrades when its row
  * is not mounted, whatever backend serves the session.
  */
-import { realpath, stat } from 'node:fs/promises'
+import { readlink, realpath, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { AdapterRuntimeOptions } from '../../../adapter/kernel/runtime.js'
 import { readGrantStore } from '../../../adapter/standard/grants.js'
@@ -247,7 +247,12 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     const readTicket = issued
     // Resolve on every sample: git init and a retargeted .git file can change
     // the repository without changing cwd. Async reads leave the UI runnable.
-    const observed = (await readGitMetadata(await gitHeadPath(requestedCwd)))?.trim()
+    const headPath = await gitHeadPath(requestedCwd)
+    // core.preferSymlinkRefs stores the symbolic ref in the HEAD link itself.
+    const link = headPath === undefined ? undefined : await readlink(headPath).catch(() => undefined)
+    const observed = link?.startsWith('refs/')
+      ? `ref: ${link}`
+      : (await readGitMetadata(headPath))?.trim()
     if (readTicket !== issued || !deps.owner.current() || state.cwd !== requestedCwd) return
     if (!clearFirst) {
       if (observed === undefined) {
@@ -272,6 +277,8 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     retryAfter = undefined
     const shell = ctx.get('shell') as ForegroundShell | undefined
     if (!shell) {
+      // A missing service must not leave an older HEAD's ticket current.
+      issued += 1
       retry()
       return
     }
