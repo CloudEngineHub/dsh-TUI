@@ -143,6 +143,8 @@ export interface PlanReviewIntentView {
 /** One question of a structured ask (`ask_user_question` / `AskUserQuestion`). */
 export interface QuestionItemView {
   readonly question: string
+  /** Explicit authentication purpose; independent of secret input or presentation. */
+  readonly purpose?: 'auth'
   readonly header?: string
   /** Long-form body (a plan under review). */
   readonly detail?: string

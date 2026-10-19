@@ -27,6 +27,8 @@ export type ProgramBlockedPrompt = {
  * and its live batch router into a real mount.
  */
 export type ProgramStatusChannel = {
+  /** The backend can remain running after its replayed rows are settled. */
+  status: 'starting' | 'idle' | 'running' | 'disposed'
   /** A turn is running. */
   working: boolean
   /**
@@ -103,7 +105,7 @@ export function useProgramStatus(input: ProgramStatusInput): void {
   })
 
   const { channel, blocked, enabled } = input
-  const { working, turnOutcome, liveTurnEnds, agentBindingGeneration, sessionTitle, sessionId } = channel
+  const { status, working, turnOutcome, liveTurnEnds, agentBindingGeneration, sessionTitle, sessionId } = channel
 
   useEffect(() => {
     if (!enabled || !writeRaw) return
@@ -120,7 +122,8 @@ export function useProgramStatus(input: ProgramStatusInput): void {
 
     const derive = (): { state: ProgramState; kind?: ProgramBlockedKind; msg?: string } => {
       if (blocked !== null) return { state: 'blocked', kind: blocked.kind, msg: blocked.message }
-      if (working) return { state: 'working' }
+      // Current backend activity does not authorize a historical outcome.
+      if (working || status === 'running') return { state: 'working' }
       if (!latchRef.current.sawWorking) return { state: 'idle' }
       switch (turnOutcome) {
         case 'error':
@@ -149,5 +152,5 @@ export function useProgramStatus(input: ProgramStatusInput): void {
     if (sequence === '' || (sequence === lastReport?.sequence && liveTurnEnds === lastReport?.liveTurnEnds)) return
     lastReportRef.current = { sequence, liveTurnEnds }
     writeRaw(sequence)
-  }, [enabled, working, turnOutcome, liveTurnEnds, agentBindingGeneration, blocked, sessionTitle, writeRaw, sessionId])
+  }, [enabled, status, working, turnOutcome, liveTurnEnds, agentBindingGeneration, blocked, sessionTitle, writeRaw, sessionId])
 }

@@ -289,7 +289,7 @@ const statusInput = (
   blocked: StatusInput['blocked'] = null,
   enabled = true,
 ): StatusInput => ({
-  channel: { working: false, turnOutcome: undefined, liveTurnEnds: 0, agentBindingGeneration: 0, sessionTitle: 'sess', sessionId: 's1', ...over },
+  channel: { status: 'idle', working: false, turnOutcome: undefined, liveTurnEnds: 0, agentBindingGeneration: 0, sessionTitle: 'sess', sessionId: 's1', ...over },
   blocked,
   enabled,
 })
@@ -537,7 +537,7 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
     })
     router.route(history, { replay: true }, () => true)
     router.route(initialLive, { replay: false }, () => true)
-    const channel = Object.assign(rig.state, { liveTurnEnds: router.turnEnds(), agentBindingGeneration: 0 })
+    const channel = Object.assign(rig.state as ChannelState, { liveTurnEnds: router.turnEnds(), agentBindingGeneration: 0 })
     const { instance, set, reports } = mountHook({ channel, blocked: null, enabled: true })
     return {
       rig,
@@ -587,6 +587,33 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
     })
     resumed.unmount()
   }
+
+  // Binding settles replay rows, but a resumed backend can still be running.
+  const activeResume = mountProjection([], [{ type: 'session.status', status: 'running' }])
+  await flush()
+  check('a running resumed session reports working after its history projection is settled', () => {
+    assert.equal(activeResume.rig.state.working, false)
+    assert.equal(activeResume.reports().at(-1), 'state=working:app=dsh-tui:title=c2Vzcw==')
+  })
+  await activeResume.fold([
+    { type: 'turn.end', turn: 1, reason: { kind: 'completed' }, time: 1002 },
+    { type: 'session.status', status: 'idle' },
+  ])
+  check('the live end of that resumed session reports done', () => {
+    assert.equal(activeResume.reports().at(-1), 'state=done:app=dsh-tui:title=c2Vzcw==')
+  })
+  activeResume.unmount()
+
+  const statusOnly = mountProjection([
+    ...user('old-status-u1', 1, 1),
+    { type: 'turn.end', turn: 1, reason: { kind: 'completed' }, time: 1002 },
+  ], [{ type: 'session.status', status: 'running' }])
+  await flush()
+  await statusOnly.fold([{ type: 'session.status', status: 'idle' }])
+  check('running status alone cannot turn a historical outcome into a fresh done', () => {
+    assert.equal(statusOnly.reports().at(-1), 'state=idle:app=dsh-tui:title=c2Vzcw==')
+  })
+  statusOnly.unmount()
 
   for (const status of ['idle', 'disposed'] as const) {
     const recovered = mountProjection()

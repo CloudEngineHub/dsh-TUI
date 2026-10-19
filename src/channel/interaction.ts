@@ -44,6 +44,7 @@ function storeRequest(request: QuestionRequestView, signal: AbortSignal): Questi
     questions: request.questions.map((question, index) => ({
       id: String(index),
       question: question.question,
+      ...(question.purpose === undefined ? {} : { purpose: question.purpose }),
       ...(question.header === undefined ? {} : { header: question.header }),
       ...(question.detail === undefined ? {} : { detail: question.detail }),
       options: question.options.map(option => ({ label: option.label, ...(option.description === undefined ? {} : { description: option.description }) })),

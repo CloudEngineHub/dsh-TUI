@@ -431,6 +431,55 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
   }
 }
 
+// Real Codex login -> interaction -> QuestionStore -> Chat -> OSC status.
+{
+  const [{ createCodexAuthCapability }, { createCodexAuth }, { createCodexHub }, { createFakeAppServer }, { attachInteraction }, { PermissionStore }] = await Promise.all([
+    import('../src/backends/codex/auth/status.js'), import('../src/backends/codex/auth/external-tokens.js'),
+    import('../src/backends/codex/rpc/hub.js'), import('./lib/codex-fake-app-server.js'),
+    import('../src/channel/interaction.js'), import('../src/channel/permissions.js'),
+  ])
+  const savedStatusFlag = process.env.DSH_TUI_PROGRAM_STATUS
+  process.env.DSH_TUI_PROGRAM_STATUS = '1'
+  const questions = new QuestionStore()
+  const fake = createFakeAppServer()
+  fake.on('account/login/start', () => ({ type: 'chatgptDeviceCode', loginId: 'status-device', verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'ABCD-EFGH' }))
+  fake.on('account/login/cancel', () => ({}))
+  const hub = createCodexHub({ executable: '/fake/codex-status', args: ['app-server'], env: {}, cwd: '/TMP/project' }, { transportFactory: fake.transportFactory })
+  const auth = createCodexAuthCapability(createCodexAuth({ hub, cwd: '/TMP/project', config: {} }), batch => interaction.apply(batch))
+  const interaction = attachInteraction({ permissions: new PermissionStore(), questions, debug: () => undefined }, {
+    sessionId: 'codex-status', capabilities: { questions: { respond: auth.respondQuestion, cancel: auth.cancelQuestion } },
+  })
+  const chat = await mountChat({}, {}, { questionStore: questions })
+  const report = () => [...chat.stdout.frames.join('').matchAll(/\x1b\]7501;([^\x1b]*)\x1b\\/gu)].at(-1)?.[1] ?? ''
+  let flow: Promise<void> | undefined
+  try {
+    for (const [method, index] of [['API key', 1], ['device code', 0]] as const) {
+      flow = auth.capability.login()
+      await settle(() => questions.getSnapshot() !== null)
+      check(`OSC 7501 ${method} method selection is blocked/auth`,
+        await settled(() => report().startsWith('state=blocked:kind=auth:')), report())
+      questions.answerCurrent({ selected: [questions.getSnapshot()!.question.options![index]!.label] })
+      await settle(() => method === 'API key' ? questions.getSnapshot()?.question.secret === true : questions.getSnapshot()?.question.link !== undefined)
+      check(`OSC 7501 ${method} purpose survives the real interaction/store path`,
+        questions.getSnapshot()?.question.purpose === 'auth' && report().startsWith('state=blocked:kind=auth:'), report())
+      auth.withdrawAll()
+      await flow
+      await settle(() => !report().startsWith('state=blocked:'))
+    }
+    interaction.apply([{ type: 'question.request', request: { requestId: 'ordinary-question', questions: [{ header: 'Codex', question: 'Token?', options: [], secret: true }] } }])
+    check('OSC 7501 an unmarked secret question remains blocked/question',
+      await settled(() => report().startsWith('state=blocked:kind=question:')), report())
+  } finally {
+    auth.dispose()
+    interaction.release()
+    await flow
+    await chat.unmount()
+    await hub.close()
+    if (savedStatusFlag === undefined) delete process.env.DSH_TUI_PROGRAM_STATUS
+    else process.env.DSH_TUI_PROGRAM_STATUS = savedStatusFlag
+  }
+}
+
 // ── A. /setup 打开向导 ─────────────────────────────────────────────────────
 {
   const chat = await mountChat({ launchpadOnBoot: true })

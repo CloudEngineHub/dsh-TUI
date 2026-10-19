@@ -2435,8 +2435,8 @@ export function Chat({
       return { kind: 'question', message: t('program-status-dialog', { title: dialogSnapshot.title }) }
     }
     if (questionSnapshot !== null) {
-      const { header, question } = questionSnapshot.question
-      return { kind: 'question', message: t('program-status-question', { question: header ?? question }) }
+      const { header, question, purpose } = questionSnapshot.question
+      return { kind: purpose === 'auth' ? 'auth' : 'question', message: t('program-status-question', { question: header ?? question }) }
     }
     return null
   }, [approvalSnapshot, dialogSnapshot, questionSnapshot, lang])
