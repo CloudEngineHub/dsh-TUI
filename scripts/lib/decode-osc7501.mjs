@@ -83,13 +83,13 @@ export function decodeBase64(text) {
   return isUtf8(decoded) ? decoded.toString('utf8') : null
 }
 
-/** 把一条报告 body 解析成 `key=value` 对；没有 `=` 或空键的 pair 按规范跳过。 */
+/** 保留有序键值对，先逐项校验上限，再应用重复键的最后值。 */
 export function parsePairs(body) {
-  const out = {}
+  const out = []
   for (const pair of body.split(':')) {
     const eq = pair.indexOf('=')
     if (eq <= 0) continue
-    out[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim()
+    out.push([pair.slice(0, eq).trim(), pair.slice(eq + 1).trim()])
   }
   return out
 }
@@ -105,11 +105,25 @@ export function interpretReport(body) {
   if (trimmed.startsWith('?')) {
     return { ok: true, line: `探测回复/查询：${escapeForDisplay(trimmed)}` }
   }
-  const pairs = parsePairs(body)
+  const entries = parsePairs(body)
   const decoded = {}
-  for (const key of ['title', 'msg']) {
-    const raw = pairs[key]
-    if (raw === undefined || raw === '') continue
+  for (const [key, raw] of entries) {
+    const segments = key === 'id' ? raw.split('/') : []
+    if (Buffer.byteLength(key) > 16
+      || (key === 'app' && Buffer.byteLength(raw) > 32)
+      || (key === 'id' && (Buffer.byteLength(raw) > 128 || segments.length > 8
+        || segments.some(segment => Buffer.byteLength(segment) > 32)))) {
+      return { ok: false, reason: '字段超过协议上限', detail: escapeForDisplay(key) }
+    }
+    if (key !== 'title' && key !== 'msg') continue
+    if (raw === '') {
+      delete decoded[key]
+      continue
+    }
+    const [encodedLimit, decodedLimit] = key === 'title' ? [256, 192] : [2732, 2048]
+    if (Buffer.byteLength(raw) > encodedLimit) {
+      return { ok: false, reason: `${key} 超过编码字节上限`, detail: `${Buffer.byteLength(raw)} > ${encodedLimit}` }
+    }
     const text = decodeBase64(raw)
     if (text === null) {
       return { ok: false, reason: `${key} 不是合法 base64`, detail: escapeForDisplay(raw) }
@@ -117,9 +131,13 @@ export function interpretReport(body) {
     if (hasControlChar(text)) {
       return { ok: false, reason: `解码后的 ${key} 含控制字符`, detail: escapeForDisplay(raw) }
     }
+    if (Buffer.byteLength(text) > decodedLimit) {
+      return { ok: false, reason: `${key} 超过解码字节上限`, detail: `${Buffer.byteLength(text)} > ${decodedLimit}` }
+    }
     decoded[key] = text
   }
 
+  const pairs = Object.fromEntries(entries)
   const state = pairs.state ?? '(缺 state)'
   const bits = [`${STATE_GLYPH[state] ?? '?'} ${escapeForDisplay(state)}`]
   if (pairs.kind !== undefined) bits.push(`kind=${escapeForDisplay(pairs.kind)}`)
@@ -141,7 +159,10 @@ export function scanChunk(text) {
   const entries = []
   let cursor = 0
   for (const match of text.matchAll(/\x1b\]7501;([^\x07\x1b]*)(?:\x07|\x1b\\)/g)) {
-    entries.push(interpretReport(match[1] ?? ''))
+    const bytes = Buffer.byteLength(match[0], 'utf8')
+    entries.push(bytes > MAX_SEQUENCE_BYTES
+      ? { ok: false, reason: `序列超过 ${MAX_SEQUENCE_BYTES} 字节上限`, detail: `${bytes} bytes` }
+      : interpretReport(match[1] ?? ''))
     cursor = (match.index ?? 0) + match[0].length
   }
   return { entries, pending: retainPending(text.slice(cursor)) }

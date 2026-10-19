@@ -19,7 +19,7 @@
 
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -27,6 +27,7 @@ import {
   decodeBase64,
   escapeForDisplay,
   interpretReport,
+  MAX_SEQUENCE_BYTES,
   scanChunk,
 } from './lib/decode-osc7501.mjs'
 
@@ -103,6 +104,46 @@ check('超过整条序列上限的尾巴被丢掉（不会无限增长）', () =
   const { entries, pending } = scanChunk(`\x1b]7501;${'x'.repeat(5000)}`)
   assert.equal(entries.length, 0)
   assert.equal(pending, '')
+})
+
+check('完整 BEL/ST 帧按实际字节限长，分块或单块都不能绕过', () => {
+  for (const end of ['\x07', '\x1b\\']) {
+    const prefix = '\x1b]7501;state=done:future='
+    const exact = prefix + 'x'.repeat(MAX_SEQUENCE_BYTES - Buffer.byteLength(prefix + end)) + end
+    assert.equal(scanChunk(exact).entries[0].ok, true, '未知字段不应人为收紧帧上限')
+    const oversized = prefix + 'x'.repeat(MAX_SEQUENCE_BYTES) + end
+    for (const cut of [0, prefix.length]) {
+      const first = scanChunk(oversized.slice(0, cut))
+      const entry = scanChunk(first.pending + oversized.slice(cut)).entries[0]
+      assert.equal(entry.ok, false)
+      assert.match(entry.reason, /4096/)
+      assert.ok(entry.detail.length < 100, '超长帧不应完整复制进错误输出')
+    }
+  }
+})
+
+check('字段硬上限在解码前后都执行，重复字段不能隐藏前一项超限', () => {
+  const pairs = [
+    'abcdefghijklmnopq=x',
+    `app=${'a'.repeat(33)}`,
+    `id=${['a'.repeat(32), 'b'.repeat(32), 'c'.repeat(32), 'd'.repeat(30)].join('/')}`,
+    `id=${'a'.repeat(33)}`,
+    `id=${Array(9).fill('a').join('/')}`,
+    `title=${B64('x'.repeat(193))}`,
+    `msg=${B64('x'.repeat(2050))}`,
+    `msg=${B64('界'.repeat(683))}`,
+    `title=${B64('x'.repeat(193))}:title=${B64('ok')}`,
+  ]
+  for (const pair of pairs) {
+    const entry = interpretReport(`state=done:${pair}`)
+    assert.equal(entry.ok, false, pair.slice(0, 45))
+    assert.match(entry.reason, /上限/)
+  }
+  const edge = interpretReport(`state=done:abcdefghijklmnop=x:app=${'a'.repeat(32)}:id=${['a'.repeat(32), 'b'.repeat(32), 'c'.repeat(32), 'd'.repeat(29)].join('/')}:title=${B64('é'.repeat(96))}:msg=${B64('界'.repeat(682) + 'ab')}`)
+  assert.equal(edge.ok, true)
+  assert.equal(interpretReport(`state=done:id=${Array(8).fill('a').join('/')}`).ok, true)
+  const repeated = interpretReport(`state=done:title=${B64('old')}:title=`)
+  assert.ok(!repeated.line.includes('old'), '最后的空值必须清掉旧字段')
 })
 
 // -----------------------------------------------------------------------------
@@ -307,7 +348,8 @@ const hostileLog = () => [
 const dir = mkdtempSync(join(tmpdir(), 'decode-osc7501-'))
 try {
   const logPath = join(dir, 'pty.log')
-  writeFileSync(logPath, hostileLog())
+  const oversizedFrame = SEQ(`state=error:msg=${B64('x'.repeat(4000))}`)
+  writeFileSync(logPath, hostileLog() + oversizedFrame)
 
   const fileRun = spawnSync(process.execPath, [SCRIPT, logPath], { encoding: 'utf8' })
   check('文件入口：合法报告照常展示，非法报告被跳过', () => {
@@ -320,7 +362,8 @@ try {
       `换行 payload 未被拒绝：${fileRun.stdout}`,
     )
     assert.match(fileRun.stdout, /✗ 跳过（解码后的 title 含控制字符）：/)
-    assert.match(fileRun.stdout, /跳过 3 条非法报告/)
+    assert.match(fileRun.stdout, /跳过 4 条非法报告/)
+    assert.match(fileRun.stdout, /序列超过 4096 字节上限/)
   })
 
   check('文件入口：stdout 里没有任何可执行控制字节', () => {
@@ -338,11 +381,12 @@ try {
     })
   }
 
-  const stdinRun = spawnSync(process.execPath, [SCRIPT, '-'], { encoding: 'utf8', input: hostileLog() })
+  const stdinRun = spawnSync(process.execPath, [SCRIPT, '-'], { encoding: 'utf8', input: hostileLog() + oversizedFrame })
   check('stdin 入口：同样安全，且报告不因跨 chunk 断裂', () => {
     assert.equal(stdinRun.status, 0, stdinRun.stderr)
     assert.match(stdinRun.stdout, /◐ working/)
     assert.match(stdinRun.stdout, /● done/)
+    assert.match(stdinRun.stdout, /序列超过 4096 字节上限/)
     assert.ok(!stdinRun.stdout.includes('\x1b'), 'stdout 出现了 ESC')
     assert.ok(!NO_CONTROL.test(stdinRun.stdout), `stdout 出现控制字符：${JSON.stringify(stdinRun.stdout)}`)
   })
@@ -350,13 +394,18 @@ try {
   // --follow：只读新增字节；换掉文件（fd 指向已删除的 inode）后必须重新跟随。
   const followPath = join(dir, 'follow.log')
   const initialLog = SEQ('state=working:app=dsh-tui')
-  writeFileSync(followPath, initialLog)
-  const child = spawn(process.execPath, [SCRIPT, '--follow', followPath], { stdio: ['ignore', 'pipe', 'ignore'] })
+  const child = spawn(process.execPath, [SCRIPT, '--follow', followPath], { stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
+  let diagnostics = ''
   const waiters = new Set()
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', chunk => {
     output += chunk
+    for (const waiter of [...waiters]) waiter()
+  })
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', chunk => {
+    diagnostics += chunk
     for (const waiter of [...waiters]) waiter()
   })
   const waitFor = (predicate, label, timeoutMs = 10_000) =>
@@ -383,7 +432,20 @@ try {
   }
 
   try {
+    await waitFor(text => text.includes('跟踪'), '跟踪启动')
+    check('--follow 暂缺文件时安静等待创建', () => assert.equal(diagnostics, ''))
+    mkdirSync(followPath)
+    await checkAsync('--follow 不可读目标给出可见诊断并保留恢复机会', async () => {
+      await waitFor(() => diagnostics.includes('不是普通文件'), '目录错误诊断', 2000)
+      assert.ok(!NO_CONTROL.test(diagnostics))
+    })
+    rmSync(followPath, { recursive: true })
+    writeFileSync(followPath, initialLog + oversizedFrame)
     await waitFor(text => text.includes('◐ working'), '第一条报告')
+    check('--follow 目标恢复后继续解码且拒绝超长帧', () => {
+      assert.match(output, /序列超过 4096 字节上限/)
+      assert.equal(occurrences('✗ error'), 0)
+    })
 
     await checkAsync('--follow 只读新增字节，轮换后重新跟随且不重放旧报告', async () => {
       appendFileSync(followPath, '\x1b[38;5;1mrender only\x1b[0m')
@@ -397,7 +459,7 @@ try {
 
       // 轮换 1：新文件**与旧文件等长**。只看长度的实现（total < seenSize）发现
       // 不了它——长度没缩回，偏移却停在旧长度上，新文件的报告永远读不到。
-      const grown = SEQ('state=working:app=dsh-tui') + '\x1b[38;5;1mrender only\x1b[0m' + SEQ('state=done:app=dsh-tui')
+      const grown = initialLog + oversizedFrame + '\x1b[38;5;1mrender only\x1b[0m' + SEQ('state=done:app=dsh-tui')
       rotate(SEQ('state=error:app=dsh-tui'), Buffer.byteLength(grown))
       await waitFor(text => text.includes('✗ error'), '等长轮换后的报告')
       assert.equal(occurrences('◐ working'), 1, '等长轮换后重放了旧报告')

@@ -99,7 +99,7 @@ if (target === '-') {
     try {
       stats = statSync(target)
     } catch (error) {
-      if (!follow) throw error
+      if (!follow || error?.code !== 'ENOENT') throw error
       // 路径不在了：旧句柄指的是已删除的 inode，留着它只会让「新文件恰好
       // 复用同一 inode」被误判成没换过。丢掉句柄并要求复位。
       closeTarget()
@@ -133,8 +133,13 @@ if (target === '-') {
       if (checkTarget()) tail.reset()
       printEntries(tail.poll())
     } catch (error) {
+      if (!follow || error?.code !== 'ENOENT') {
+        console.error(`无法读取 ${escapeForDisplay(target)}：${escapeForDisplay(error instanceof Error ? error.message : String(error))}`)
+      }
       if (!follow) throw error
-      // 文件暂时读不到（还没建出来 / 已被删掉）：当作没有新内容。
+      // 旧文件已关闭但新文件打开失败，旧 offset 不能留给恢复后的新句柄。
+      if (descriptor < 0) tail.reset()
+      // 保留 watch，权限或目标恢复后继续读；ENOENT 安静等待创建。
     }
   }
 
@@ -150,8 +155,7 @@ if (target === '-') {
         console.log('没有抓到 OSC 7501。检查：dsh-tui 是否真的在 pty 里跑过（stdout 必须是 TTY），')
         console.log('以及 DSH_TUI_PROGRAM_STATUS 未被设为 0/false/no/off。')
       }
-    } catch (error) {
-      console.error(`无法读取 ${escapeForDisplay(target)}：${escapeForDisplay(error instanceof Error ? error.message : String(error))}`)
+    } catch {
       process.exitCode = 1
     } finally {
       closeTarget()
