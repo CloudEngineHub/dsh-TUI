@@ -28,6 +28,7 @@ import {
   escapeForDisplay,
   interpretReport,
   MAX_SEQUENCE_BYTES,
+  REPORT_PREFIX,
   scanChunk,
 } from './lib/decode-osc7501.mjs'
 
@@ -77,6 +78,13 @@ check('正常报告解出状态、kind、app、msg', () => {
   assert.match(entries[0].line, /kind=permission/)
   assert.match(entries[0].line, /app=terraform/)
   assert.match(entries[0].line, /msg="Apply 3\?"/)
+})
+
+check('base64 padding 必须匹配长度，省略 padding 仍合法', () => {
+  assert.deepEqual(['YQ=', 'YWJ==', 'YWJj=', 'YR==', 'YWJ='].map(decodeBase64), Array(5).fill(null))
+  for (const [encoded, text] of [['', ''], ['YQ==', 'a'], ['YQ', 'a'], ['YWI=', 'ab'], ['YWI', 'ab'], ['YWJj', 'abc']]) {
+    assert.equal(decodeBase64(encoded), text, encoded)
+  }
 })
 
 check('探测回复与查询走单独一行', () => {
@@ -252,7 +260,7 @@ const controller = () => {
   return {
     write(text) { bytes = Buffer.from(text, 'utf8') },
     append(text) { bytes = Buffer.concat([bytes, Buffer.from(text, 'utf8')]) },
-    read: (offset, length) => bytes.subarray(offset, offset + length).toString('utf8'),
+    read: (offset, length) => bytes.subarray(offset, offset + length),
     size: () => bytes.length,
   }
 }
@@ -265,6 +273,28 @@ check('初始报告只出一次，重复 poll 与追加渲染字节都不再出'
   assert.equal(tail.poll().length, 0)
   source.append('\x1b[38;5;1mmore render\x1b[0m')
   assert.equal(tail.poll().length, 0)
+})
+
+check('大捕获有界读取，跨块 UTF-8 与报告前缀不丢失', () => {
+  const source = controller()
+  const text = 'R'.repeat(64 * 1024 - REPORT_PREFIX.length - 3)
+    + SEQ('? 世界') + 'R'.repeat(64 * 1024) + SEQ('state=done:app=dsh-tui')
+  source.write(text)
+  const tail = createIncrementalTail({
+    size: source.size,
+    read: (offset, length) => {
+      assert.ok(length <= 64 * 1024, `一次请求读取 ${length} 字节`)
+      return source.read(offset, length)
+    },
+  })
+  const entries = []
+  while (tail.offset() < source.size()) {
+    const before = tail.offset()
+    entries.push(...tail.poll())
+    assert.ok(tail.offset() > before)
+  }
+  assert.deepEqual(entries, scanChunk(text).entries)
+  assert.deepEqual(tail.poll(), [])
 })
 
 check('每个分块边界都能补齐报告，包括 introducer 和 ST 内部', () => {
@@ -349,7 +379,7 @@ const dir = mkdtempSync(join(tmpdir(), 'decode-osc7501-'))
 try {
   const logPath = join(dir, 'pty.log')
   const oversizedFrame = SEQ(`state=error:msg=${B64('x'.repeat(4000))}`)
-  writeFileSync(logPath, hostileLog() + oversizedFrame)
+  writeFileSync(logPath, 'R'.repeat(64 * 1024) + hostileLog() + oversizedFrame)
 
   const fileRun = spawnSync(process.execPath, [SCRIPT, logPath], { encoding: 'utf8' })
   check('文件入口：合法报告照常展示，非法报告被跳过', () => {
@@ -393,7 +423,7 @@ try {
 
   // --follow：只读新增字节；换掉文件（fd 指向已删除的 inode）后必须重新跟随。
   const followPath = join(dir, 'follow.log')
-  const initialLog = SEQ('state=working:app=dsh-tui')
+  const initialLog = 'R'.repeat(64 * 1024) + SEQ('state=working:app=dsh-tui')
   const child = spawn(process.execPath, [SCRIPT, '--follow', followPath], { stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
   let diagnostics = ''
@@ -438,10 +468,12 @@ try {
     await checkAsync('--follow 不可读目标给出可见诊断并保留恢复机会', async () => {
       await waitFor(() => diagnostics.includes('不是普通文件'), '目录错误诊断', 2000)
       assert.ok(!NO_CONTROL.test(diagnostics))
+      await new Promise(resolve => setTimeout(resolve, 450))
+      assert.equal(diagnostics.split('不是普通文件').length - 1, 1, '同一读取错误不能每次轮询重复打印')
     })
     rmSync(followPath, { recursive: true })
     writeFileSync(followPath, initialLog + oversizedFrame)
-    await waitFor(text => text.includes('◐ working'), '第一条报告')
+    await waitFor(text => text.includes('◐ working') && text.includes('序列超过 4096 字节上限'), '报告与拒绝诊断')
     check('--follow 目标恢复后继续解码且拒绝超长帧', () => {
       assert.match(output, /序列超过 4096 字节上限/)
       assert.equal(occurrences('✗ error'), 0)
@@ -473,6 +505,10 @@ try {
       await waitFor(text => text.includes('◼ blocked'), '变长轮换后的报告')
       assert.equal(occurrences('✗ error'), 1, '变长轮换后重放了旧报告')
       assert.ok(!NO_CONTROL.test(output), `stdout 出现控制字符：${JSON.stringify(output)}`)
+      // 正常恢复后，同一种新错误仍须重新报告。
+      unlinkSync(followPath)
+      mkdirSync(followPath)
+      await waitFor(() => diagnostics.split('不是普通文件').length - 1 === 2, '恢复后的新目录错误')
     })
   } finally {
     child.kill('SIGTERM')

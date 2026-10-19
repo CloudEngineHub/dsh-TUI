@@ -28,7 +28,7 @@
  * 协议层回归见 scripts/verify-osc7501.tsx）；本脚本只做解码与展示。
  */
 
-import { closeSync, openSync, readSync, statSync, watchFile } from 'node:fs'
+import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { Buffer } from 'node:buffer'
 import { createIncrementalTail, escapeForDisplay, scanChunk } from './lib/decode-osc7501.mjs'
 
@@ -82,6 +82,7 @@ if (target === '-') {
   /** 当前句柄对应文件的 `dev:ino`，用来识别路径被换成了另一个文件。 */
   let descriptorKey = ''
   let pendingSize = 0
+  let lastReadError = ''
   const closeTarget = () => {
     if (descriptor >= 0) closeSync(descriptor)
     descriptor = -1
@@ -123,7 +124,7 @@ if (target === '-') {
   const readRange = (offset, length) => {
     const buffer = Buffer.allocUnsafe(length)
     const got = readSync(descriptor, buffer, 0, length, offset)
-    return buffer.toString('utf8', 0, got)
+    return buffer.subarray(0, got)
   }
   // 长度由 checkTarget 本次 stat 的结果给出：一次回调只 stat 一次，轮转判定
   // 与实际读取看到的必然是同一份状态。
@@ -131,22 +132,29 @@ if (target === '-') {
   const poll = () => {
     try {
       if (checkTarget()) tail.reset()
-      printEntries(tail.poll())
+      let previous
+      do {
+        previous = tail.offset()
+        printEntries(tail.poll())
+      } while (tail.offset() !== previous && tail.offset() < pendingSize)
+      lastReadError = ''
     } catch (error) {
       if (!follow || error?.code !== 'ENOENT') {
-        console.error(`无法读取 ${escapeForDisplay(target)}：${escapeForDisplay(error instanceof Error ? error.message : String(error))}`)
+        const message = `无法读取 ${escapeForDisplay(target)}：${escapeForDisplay(error instanceof Error ? error.message : String(error))}`
+        if (message !== lastReadError) console.error(message)
+        lastReadError = message
       }
       if (!follow) throw error
       // 旧文件已关闭但新文件打开失败，旧 offset 不能留给恢复后的新句柄。
       if (descriptor < 0) tail.reset()
-      // 保留 watch，权限或目标恢复后继续读；ENOENT 安静等待创建。
+      // 保留轮询，权限或目标恢复后继续读；ENOENT 安静等待创建。
     }
   }
 
   if (follow) {
+    setInterval(poll, 200)
     poll()
     console.log(`跟踪 ${escapeForDisplay(target)}（Ctrl+C 退出）…\n`)
-    watchFile(target, { interval: 200 }, poll)
   } else {
     try {
       poll()

@@ -409,6 +409,14 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
   assert.equal(reports().at(-1), 'state=error:app=dsh-tui:title=c2Vzcw==')
   console.log('  ok - error outcome reports error')
 
+  set(statusInput({ turnOutcome: 'error' }, { kind: 'question', message: 'Idle plugin prompt' }))
+  await flush()
+  assert.match(reports().at(-1)!, /^state=blocked:/)
+  set(statusInput({ turnOutcome: 'error' }))
+  await flush()
+  assert.equal(reports().at(-1), 'state=error:app=dsh-tui:title=c2Vzcw==')
+  console.log('  ok - closing an idle dialog restores the same live turn result')
+
   set(statusInput({ working: true }))
   await flush()
   set(statusInput({ turnOutcome: 'interrupted' }))
@@ -452,6 +460,7 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
   set(statusInput({ agentBindingGeneration: 1, liveTurnEnds: 1, turnOutcome: 'completed' }))
   await flush()
   assert.equal(reports().length, beforeRebind + 1, 'a new binding must not deduplicate the same count and outcome from the old binding')
+  assert.match(reports().at(-1)!, /^state=done:/, 'the new binding must preserve its completed live turn')
   set(statusInput({ sessionId: 's2', agentBindingGeneration: 1, liveTurnEnds: 1, turnOutcome: 'error' }))
   await flush()
   assert.match(reports().at(-1)!, /^state=error:/, 'a newly bound session may finish before its first render')

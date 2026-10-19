@@ -15,6 +15,7 @@
  */
 
 import { Buffer, isUtf8 } from 'node:buffer'
+import { StringDecoder } from 'node:string_decoder'
 
 /** 报告起始：`ESC ] 7501 ;`。 */
 export const REPORT_PREFIX = '\x1b]7501;'
@@ -72,14 +73,15 @@ export function escapeForDisplay(text) {
 
 /**
  * 规范的 base64（UTF-8 文本，padding 可省）。解不出返回 `null`：字符集不合法、
- * 长度不可能、或字节不是合法 UTF-8。直接校验字节，不能把合法的 U+FFFD
+ * 长度/padding 不符、非零 pad bits、或字节不是合法 UTF-8。直接校验字节，不能把合法的 U+FFFD
  * 误当成解码失败。空串解出空串。
  */
 export function decodeBase64(text) {
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(text)) return null
   const body = text.replace(/=+$/u, '')
-  if (body.length % 4 === 1) return null
+  if (body.length % 4 === 1 || (body !== text && text.length % 4 !== 0)) return null
   const decoded = Buffer.from(body, 'base64')
+  if (decoded.toString('base64').replace(/=+$/u, '') !== body) return null
   return isUtf8(decoded) ? decoded.toString('utf8') : null
 }
 
@@ -193,13 +195,14 @@ function retainPending(rest) {
  * 只会变大。所以调用方发现路径换了文件时要自己调 `reset()`——位置、半条尾巴
  * 与旧句柄都属于上一个文件，新文件必须从 0 读起。
  *
- * `size()` 返回源当前字节长度；`read(offset, length)` 返回该区间解码后的文本
- * （调用方负责在源被替换后换用新的句柄）。报告本体是 ASCII（键 + base64），
- * 所以按块解 UTF-8 不会切断报告；被切断的多字节字符只会落在被丢弃的渲染字节里。
+ * `size()` 返回源当前字节长度；`read(offset, length)` 返回 Buffer（也兼容已解码
+ * 的文本）。每次 poll 最多读 64 KiB，调用方可继续 poll 消费剩余字节；UTF-8
+ * 跨块字节与半条报告均留到下一块。源被替换后由调用方换句柄并 reset。
  */
 export function createIncrementalTail({ read, size }) {
   let offset = 0
   let pending = ''
+  let decoder = new StringDecoder('utf8')
   return {
     /** 已消费到的源偏移。 */
     offset: () => offset,
@@ -209,19 +212,22 @@ export function createIncrementalTail({ read, size }) {
     reset() {
       offset = 0
       pending = ''
+      decoder = new StringDecoder('utf8')
     },
-    /** 读取并返回新增内容里的完整报告。 */
+    /** 有界读取下一块，返回其中完整的报告。 */
     poll() {
       const total = size()
       if (total < offset) {
         // 截断：旧位置与新尾巴都对不上新内容了。
         offset = 0
         pending = ''
+        decoder = new StringDecoder('utf8')
       }
       if (total === offset) return []
-      const chunk = read(offset, total - offset)
-      offset = total
-      const scanned = scanChunk(pending + chunk)
+      const length = Math.min(total - offset, 64 * 1024)
+      const chunk = read(offset, length)
+      offset += typeof chunk === 'string' ? length : chunk.length
+      const scanned = scanChunk(pending + (typeof chunk === 'string' ? chunk : decoder.write(chunk)))
       pending = scanned.pending
       return scanned.entries
     },
