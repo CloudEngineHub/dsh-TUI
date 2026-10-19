@@ -229,6 +229,8 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   let headPath: string | undefined
   /** The HEAD text the last probe was issued against. */
   let signature: string | undefined
+  /** Tickets handed out to probes; only the newest holder may publish. */
+  let issued = 0
 
   const resolveHead = (): string | undefined => {
     const cwd = state.cwd
@@ -256,12 +258,23 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     // flight refreshes the branch for the new cwd, so a late reply from the
     // old workspace must be dropped (stale statusline, issue #96).
     const requestedCwd = state.cwd
+    // Two probes can be in flight at once (the shell does not serialize them),
+    // so each takes a ticket and only the newest one speaks for the workspace.
+    const ticket = ++issued
     void runForegroundShell(shell, {
       command: 'git branch --show-current',
       workdir: requestedCwd,
       timeoutMs: 3000,
     })
       .then((result) => {
+        // The newer probe already speaks for the workspace and its baseline
+        // matches the current HEAD, so nothing would re-probe after this
+        // reply: a slower older one would pin a branch no longer checked out.
+        if (ticket !== issued) return
+        // A timed-out probe reports whatever it managed to capture, often
+        // nothing. That is not "no branch": clearing on it would blank the
+        // breadcrumb while the consumed signature keeps the next tick quiet.
+        if (result.timedOut) return
         if (!deps.owner.current() || state.cwd !== requestedCwd) return
         const branch = result.stdout.text.trim()
         // A detached HEAD (or a cwd outside any repository) answers nothing:

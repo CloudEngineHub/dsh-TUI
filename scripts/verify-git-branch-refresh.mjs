@@ -18,7 +18,11 @@
  * - an unchanged HEAD neither re-runs the probe nor redraws;
  * - `releaseContributions()` stops the refresh for good;
  * - a cwd without `.git` stays quiet: no probe, no throw, no value change;
- * - a linked worktree (`.git` is a `gitdir:` file) follows its real git dir.
+ * - a linked worktree (`.git` is a `gitdir:` file) follows its real git dir,
+ *   both with an absolute target and with the relative one git writes for a
+ *   submodule;
+ * - a reply from an older probe that lands after a newer one does not
+ *   overwrite the newer branch.
  *
  * Reads the compiled output, so `pnpm compile` must have produced `lib/types/`:
  *   node scripts/verify-git-branch-refresh.mjs
@@ -50,7 +54,7 @@ const HEAD_REF = branch => `ref: refs/heads/${branch}\n`
 /** What git writes when HEAD is detached: 40 lowercase hex digits, no `ref:`. */
 const HEAD_DETACHED = '0123456789abcdef0123456789abcdef01234567\n'
 /** A rewritten HEAD must land well inside this bound (the refresh polls once a second). */
-const DETECT_TIMEOUT_MS = 3000
+const DETECT_TIMEOUT_MS = 4000
 /** One poll period plus slack: long enough that a quiet window proves quiescence. */
 const POLL_WINDOW_MS = 1500
 /** A standalone repository: the refresh only ever reads `<repo>/.git/HEAD`. */
@@ -71,6 +75,18 @@ function makeLinkedWorktree() {
   writeFileSync(join(cwd, '.git'), `gitdir: ${gitdir.replaceAll('\\', '/')}\n`)
   return { cwd, gitdir }
 }
+/** A submodule: `.git` is a file with the *relative* gitdir git writes for it. */
+function makeSubmodule() {
+  const repo = tempDir('dsh-tui-submodule-')
+  const gitdir = join(repo, '.git', 'modules', 'sub')
+  mkdirSync(gitdir, { recursive: true })
+  writeFileSync(join(gitdir, 'HEAD'), HEAD_REF('main'))
+  const cwd = join(repo, 'sub')
+  mkdirSync(cwd, { recursive: true })
+  // Resolved against the directory holding the `.git` file, never the cwd.
+  writeFileSync(join(cwd, '.git'), 'gitdir: ../.git/modules/sub\n')
+  return { cwd, gitdir }
+}
 
 /**
  * A channel over `cwd` whose host shell answers `git branch --show-current`
@@ -79,14 +95,32 @@ function makeLinkedWorktree() {
  */
 function openChannel(cwd, branch) {
   let stdout = `${branch}\n`
+  /** Once held, each later probe parks until the test opens its gate. */
+  let held = false
+  let parkedReplies = 0
   const probes = []
+  const gates = []
   const shell = {
     resolve(request) {
       probes.push(request)
       return request
     },
     async execute() {
-      return { async result() { return { stdout: { text: stdout }, stderr: { text: '' }, timedOut: false } } }
+      // Snapshot the answer at issue time: a reply says what was checked out
+      // when the probe was sent, which is what a slow shell delivers.
+      const reply = stdout
+      const parked = held
+      let open
+      const gate = new Promise(resolve => { open = resolve })
+      if (parked) gates.push(open)
+      else open()
+      return {
+        async result() {
+          await gate
+          if (parked) parkedReplies += 1
+          return { stdout: { text: reply }, stderr: { text: '' }, timedOut: false }
+        },
+      }
     },
   }
   const ctx = { on: () => () => {}, get: name => name === 'shell' ? shell : undefined, logger: { warn() {} } }
@@ -99,6 +133,11 @@ function openChannel(cwd, branch) {
     probes,
     /** What the next probe answers; '' is a detached HEAD (no branch name). */
     answer(text) { stdout = text },
+    /** Park every later probe; `gates` then holds their open callbacks. */
+    hold() { held = true },
+    gates,
+    /** Replies the parked probes have delivered, so a check can wait for them. */
+    parkedReplies: () => parkedReplies,
   }
 }
 
@@ -149,6 +188,34 @@ try {
     answer('feature-x\n')
     assert.ok(await settled(() => channel.gitBranch === 'feature-x', { timeoutMs: DETECT_TIMEOUT_MS }),
       `the breadcrumb must follow the new HEAD without rebuilding the channel (saw ${String(channel.gitBranch)})`)
+  })
+
+  // 1 Hz polling lets two probes overlap (the host shell does not serialize
+  // them), so a reply says what was checked out when it was *sent*: the older
+  // one landing last must not win.
+  const orderedRepo = makeRepo()
+  await scenario('AC-1b a slow reply must not overwrite a newer branch', { cwd: orderedRepo, branch: 'main' }, async ({ channel, answer, hold, gates, parkedReplies }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the boot probe must publish the branch the host shell reports')
+    hold()
+    writeFileSync(join(orderedRepo, '.git', 'HEAD'), HEAD_REF('first'))
+    answer('first\n')
+    assert.ok(await settled(() => gates.length === 1, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the first HEAD change must issue a probe')
+    writeFileSync(join(orderedRepo, '.git', 'HEAD'), HEAD_REF('second'))
+    answer('second\n')
+    assert.ok(await settled(() => gates.length === 2, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the second HEAD change must issue a probe while the first is still in flight')
+    // Out of order on purpose: the newer answer lands first, then the older
+    // one — the order a slow first shell run produces.
+    gates[1]()
+    gates[0]()
+    assert.ok(await settled(() => parkedReplies() === 2, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'both parked replies must land before the value is read')
+    // Reading after the second landing is a fresh timer tick, so a stale reply
+    // that overwrote the value has already run its handler.
+    assert.equal(channel.gitBranch, 'second',
+      `a slow earlier reply must not overwrite the newer branch (saw ${String(channel.gitBranch)})`)
   })
 
   const detachedRepo = makeRepo()
@@ -202,15 +269,21 @@ try {
     assert.equal(unhandled.length, 0, 'a cwd without .git must not throw out of the refresh')
   })
 
-  const worktree = makeLinkedWorktree()
-  await scenario('AC-6 a linked worktree follows its git dir HEAD', { cwd: worktree.cwd, branch: 'main' }, async ({ channel, answer }) => {
+  /**
+   * Both `gitdir:` forms end at the HEAD of a git dir outside the worktree;
+   * only how the worktree records it differs.
+   */
+  const gitdirScenario = (name, { cwd, gitdir }) => scenario(name, { cwd, branch: 'main' }, async ({ channel, answer }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
-    writeFileSync(join(worktree.gitdir, 'HEAD'), HEAD_REF('feature-wt'))
+    writeFileSync(join(gitdir, 'HEAD'), HEAD_REF('feature-wt'))
     answer('feature-wt\n')
     assert.ok(await settled(() => channel.gitBranch === 'feature-wt', { timeoutMs: DETECT_TIMEOUT_MS }),
       `a .git gitdir file must resolve to the worktree's HEAD (saw ${String(channel.gitBranch)})`)
   })
+
+  await gitdirScenario('AC-6 a linked worktree follows its git dir HEAD', makeLinkedWorktree())
+  await gitdirScenario('AC-6b a relative gitdir file resolves against the worktree', makeSubmodule())
 } finally {
   for (const dir of scratch) rmSync(dir, { recursive: true, force: true })
 }
