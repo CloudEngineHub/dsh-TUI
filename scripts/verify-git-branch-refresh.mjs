@@ -28,7 +28,9 @@
  * - deep cwd paths, git init, and gitdir retargeting stay observable;
  * - slow async reads do not pile up or escape a released owner or changed cwd;
  * - symlink cwd paths and a returning optional shell still refresh;
- * - oversized or non-regular Git control files are rejected without blocking.
+ * - oversized or non-regular Git control files are rejected without blocking;
+ * - persistent failures back off without losing same-HEAD recovery or delaying
+ *   a new checkout.
  *
  * Reads the compiled output, so `pnpm compile` must have produced `lib/types/`:
  *   node scripts/verify-git-branch-refresh.mjs
@@ -274,6 +276,57 @@ try {
       assert.equal(probes.length, 3, 'one retry must recover the branch')
     })
   }
+
+  const backoffRepo = makeRepo()
+  await scenario('persistent failures back off, recover, and let a new HEAD through', { cwd: backoffRepo, branch: 'main' }, async ({ channel, answer, failNext, probes }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    // Only the monotonic deadline clock is controlled. The channel, metadata
+    // reads, shell replies and 1 Hz polling timer all follow their real paths.
+    const originalNow = performance.now
+    let now = originalNow.call(performance)
+    performance.now = () => now
+    try {
+      const bootProbes = probes.length
+      answer('')
+      for (const failure of [undefined, 'timeout', 'reject', undefined, 'timeout', 'reject', undefined]) failNext(failure)
+      writeFileSync(join(backoffRepo, '.git', 'HEAD'), HEAD_REF('retry-budget'))
+      const delays = [1000, 2000, 4000, 8000, 16000, 30000, 30000]
+      for (const [index, delay] of delays.entries()) {
+        const expected = bootProbes + index + 1
+        assert.ok(await settled(() => probes.length === expected, { timeoutMs: DETECT_TIMEOUT_MS }),
+          'the same HEAD must remain retryable beyond three failures and at the cap')
+        await new Promise(resolve => setImmediate(resolve))
+        assert.equal(channel.gitBranch, 'main', 'a failed probe must retain the last known branch')
+        now += delay - 1
+        // 固定窗:探针 real poll ticks must remain quiet before the controlled retry deadline
+        await sleep(POLL_WINDOW_MS)
+        assert.equal(probes.length, expected, 'unchanged failing HEAD must not launch git before its retry deadline')
+        now += 1
+      }
+      answer('retry-budget')
+      assert.ok(await settled(() => channel.gitBranch === 'retry-budget', { timeoutMs: DETECT_TIMEOUT_MS }),
+        'the unchanged HEAD must still recover after repeated capped retries')
+
+      // Establish a two-second retry, then change HEAD without advancing the
+      // deadline clock. The new signature must bypass and reset that delay.
+      answer('')
+      writeFileSync(join(backoffRepo, '.git', 'HEAD'), HEAD_REF('before-reset'))
+      const beforeReset = probes.length
+      assert.ok(await settled(() => probes.length === beforeReset + 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+      await new Promise(resolve => setImmediate(resolve))
+      now += 1000
+      assert.ok(await settled(() => probes.length === beforeReset + 2, { timeoutMs: DETECT_TIMEOUT_MS }))
+      await new Promise(resolve => setImmediate(resolve))
+      writeFileSync(join(backoffRepo, '.git', 'HEAD'), HEAD_REF('after-reset'))
+      assert.ok(await settled(() => probes.length === beforeReset + 3, { timeoutMs: DETECT_TIMEOUT_MS }),
+        'a changed HEAD must bypass the previous signature retry deadline')
+      await new Promise(resolve => setImmediate(resolve))
+      answer('after-reset')
+      now += 1000
+      assert.ok(await settled(() => channel.gitBranch === 'after-reset', { timeoutMs: DETECT_TIMEOUT_MS }),
+        'a changed HEAD must reset the failure delay to the first retry interval')
+    } finally { performance.now = originalNow }
+  })
 
   // 1 Hz polling lets two probes overlap (the host shell does not serialize
   // them), so a reply says what was checked out when it was *sent*: the older

@@ -220,8 +220,13 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   const { state } = deps
   /** The HEAD text the last probe was issued against. */
   let signature: string | undefined
-  /** A transient failure retries the same HEAD on the next poll. */
-  let retryProbe = false
+  /** Retry the same HEAD after transient failure, backing off to 30 seconds. */
+  let retryAfter: number | undefined
+  let retryDelayMs = 0
+  const retry = (): void => {
+    retryDelayMs = Math.min(retryDelayMs * 2 || BRANCH_HEAD_POLL_MS, 30_000)
+    retryAfter = performance.now() + retryDelayMs
+  }
   /** Tickets handed out to probes; only the newest holder may publish. */
   let issued = 0
   /** Slow filesystem reads never accumulate more than one periodic sample. */
@@ -234,6 +239,8 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     if (clearFirst) {
       state.gitBranch = undefined
       signature = undefined
+      retryAfter = undefined
+      retryDelayMs = 0
       issued += 1
     }
     const requestedCwd = state.cwd
@@ -248,22 +255,24 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
         // a workspace whose HEAD was never readable keeps its shell-only value.
         if (signature === undefined) return
         signature = undefined
-        retryProbe = false
+        retryAfter = undefined
+        retryDelayMs = 0
         issued += 1
         if (state.gitBranch === undefined) return
         state.gitBranch = undefined
         state.emit()
         return
       }
-      if (observed === signature && !retryProbe) return
+      if (observed === signature && (retryAfter === undefined || performance.now() < retryAfter)) return
     }
     // Baseline at issue time: a checkout landing while the shell runs still
     // differs from it and triggers the next tick.
+    if (observed !== signature) retryDelayMs = 0
     signature = observed
-    retryProbe = false
+    retryAfter = undefined
     const shell = ctx.get('shell') as ForegroundShell | undefined
     if (!shell) {
-      retryProbe = true
+      retry()
       return
     }
     // Capture the requested cwd: a /resume landing while this query is in
@@ -285,7 +294,7 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
         // A timed-out probe reports whatever it captured, often nothing: that
         // is not "no branch". Retain the value and retry this HEAD.
         if (result.timedOut) {
-          retryProbe = true
+          retry()
           return
         }
         const branch = result.stdout.text.trim()
@@ -295,9 +304,10 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
           ? /^ref:\s+refs\/heads\/(.+)$/.exec(observed)?.[1]
           : observed === undefined ? undefined : '' // A detached HEAD has no branch.
         if (expectedBranch !== undefined && branch !== expectedBranch) {
-          retryProbe = true
+          retry()
           return
         }
+        retryDelayMs = 0
         // A detached HEAD (or a cwd outside any repository) answers nothing:
         // clear it, which is also what a cold start would show.
         const next = branch === '' ? undefined : branch
@@ -310,7 +320,7 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
       .catch(() => {
         // Only the current probe may request a retry; an older rejection must
         // not invalidate a successful newer result.
-        if (ticket === issued && deps.owner.current() && state.cwd === requestedCwd) retryProbe = true
+        if (ticket === issued && deps.owner.current() && state.cwd === requestedCwd) retry()
       })
   }
 
