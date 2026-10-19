@@ -852,6 +852,11 @@ const GROUPS = {
 // 浏览型命令（`/resume`）保留 key 但走 GRAY_ZONE_EXEMPT_COMMANDS 留在正常区。
     ["verify-command-hold", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold.ts']],
     ['verify-shell-compat', ['node', 'scripts/verify-shell-compat.mjs']],
+// 底栏 git 分支跟随工作区 HEAD（真实 channel + 假 shell + 自造 .git）：HEAD 改写后
+// 不重建 channel 即跟随、detached 清空而非留旧值、HEAD 未变不重探不重绘、
+// releaseContributions 后停止刷新、无 .git 不探测不抛错、linked worktree 的
+// gitdir: 形态同样跟随。
+    ['verify-git-branch-refresh', ['node', 'scripts/verify-git-branch-refresh.mjs']],
     ['verify-agent-lifecycle-compat', ['node', 'scripts/verify-agent-lifecycle-compat.mjs']],
 // 真 Agent/Session/JSONL：启动与连续 /new 不落盘权限初始化，首个输入完整
 // 保存初始权限；异步写入交接、失败重试、退出与并发工厂保持连续事件日志。
