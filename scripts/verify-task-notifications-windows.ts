@@ -111,12 +111,12 @@ type RegistryWrite = { key: string, name: string | null, value: string }
 type RunCall = { file: string, args: readonly string[], input: string | undefined }
 
 /** Stands in for the registry: records every write, so "did not touch it" is observable. */
-function recordingRegistry(failOn?: (name: string | null) => string | undefined) {
+function recordingRegistry(failOn?: (name: string | null) => string | undefined | Promise<string | undefined>) {
   const writes: RegistryWrite[] = []
   const registry: RegistryPort = {
     async setValue(key, name, value): Promise<RegistryWriteResult> {
       writes.push({ key, name, value })
-      const detail = failOn?.(name)
+      const detail = await failOn?.(name)
       return detail === undefined ? { ok: true } : { ok: false, detail }
     },
   }
@@ -124,11 +124,11 @@ function recordingRegistry(failOn?: (name: string | null) => string | undefined)
 }
 
 /** Stands in for execFileNoThrow: records the invocation, spawns nothing. */
-function recordingRunner(outcome: () => { code: number, stderr?: string } = () => ({ code: 0 })) {
+function recordingRunner(outcome: () => { code: number, stderr?: string } | Promise<{ code: number, stderr?: string }> = () => ({ code: 0 })) {
   const calls: RunCall[] = []
   const run: RunCommand = async (file, args, options) => {
     calls.push({ file, args, input: options?.input })
-    const settled = outcome()
+    const settled = await outcome()
     return { code: settled.code, stdout: '', stderr: settled.stderr ?? '' }
   }
   return { calls, run }
@@ -145,7 +145,7 @@ interface Chain {
   runner: ReturnType<typeof recordingRunner>
   /** The active-notifier decision read from the running profile, per attempt. */
   externalNotifierStates: (boolean | undefined)[]
-  /** What the toast port answered, per attempt (D8's three answers). */
+  /** What the toast port answered, per attempt. */
   toastResults: WindowsToastResult[]
   /** What the terminal path was asked to announce, in order. */
   delivered: [string, string][]
@@ -171,13 +171,15 @@ async function deliverCompletion(
     platform?: NodeJS.Platform
     backendId?: string
     plugins?: PluginRow[]
+    readPlugins?: () => Promise<PluginRow[]>
     pluginReadFails?: boolean
     registry?: ReturnType<typeof recordingRegistry>
+    runner?: ReturnType<typeof recordingRunner>
     notifications?: TaskNotificationSettings
   } = {},
 ): Promise<Chain> {
   const registry = options.registry ?? recordingRegistry()
-  const runner = recordingRunner()
+  const runner = options.runner ?? recordingRunner()
   const delivered: [string, string][] = []
   const externalNotifierStates: (boolean | undefined)[] = []
   const toastResults: WindowsToastResult[] = []
@@ -211,11 +213,11 @@ async function deliverCompletion(
     await deliverTaskCompletionOnWindows(TITLE, message, options.backendId ?? 'dsh', {
       pluginManager: { listPlugins: async () => {
         if (options.pluginReadFails) throw new Error('inventory unavailable')
-        return options.plugins ?? []
+        return options.readPlugins ? options.readPlugins() : options.plugins ?? []
       } },
       toast: async input => {
         externalNotifierStates.push(input.externalNotifierActive)
-        const result = await transport.notify(input)
+        const result = await transport.notify({ ...input, canDispatch: () => notifications.condition !== 'off' })
         toastResults.push(result)
         return result
       },
@@ -362,6 +364,53 @@ await check('a terminal that comes back while the toast is in flight still gets 
   } finally {
     resetTerminalFocusState()
   }
+})
+
+await check('explicit off suppresses pending dispatch, while focus and dispatched toasts keep the original approval', async () => {
+  const observed = []
+  for (const phase of ['inventory', 'registration', 'refocused', 'dispatched'] as const) {
+    const notifications: TaskNotificationSettings = { condition: 'unfocused', method: 'windows' }
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const pause = async (): Promise<void> => { entered.resolve(); await release.promise }
+    const registry = recordingRegistry(async name => {
+      if ((phase === 'registration' || phase === 'refocused') && name === 'DisplayName') await pause()
+      return undefined
+    })
+    const runner = recordingRunner(async () => {
+      if (phase === 'dispatched') await pause()
+      return { code: 0 }
+    })
+    setTerminalFocused(false)
+    try {
+      const pending = deliverCompletion(NASTY, {
+        notifications, registry, runner,
+        readPlugins: async () => { if (phase === 'inventory') await pause(); return [] },
+      })
+      await entered.promise
+      if (phase === 'refocused') setTerminalFocused(true)
+      else notifications.condition = 'off'
+      release.resolve()
+      const chain = await pending
+      observed.push({
+        phase,
+        result: chain.toastResults,
+        registryWrites: chain.registry.writes.length,
+        hostCalls: chain.runner.calls.length,
+        fallback: chain.delivered,
+        bell: chain.bell,
+      })
+    } finally {
+      release.resolve()
+      resetTerminalFocusState()
+    }
+  }
+  assert.deepEqual(observed, [
+    { phase: 'inventory', result: [{ status: 'suppressed' }], registryWrites: 0, hostCalls: 0, fallback: [], bell: [] },
+    { phase: 'registration', result: [{ status: 'suppressed' }], registryWrites: 2, hostCalls: 0, fallback: [], bell: [] },
+    { phase: 'refocused', result: [{ status: 'shown' }], registryWrites: 2, hostCalls: 1, fallback: [], bell: [] },
+    { phase: 'dispatched', result: [{ status: 'shown' }], registryWrites: 2, hostCalls: 1, fallback: [], bell: [] },
+  ])
 })
 
 // --- D12/AC-7: what a POSIX process must not load ------------------------------

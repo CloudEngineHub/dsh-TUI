@@ -381,7 +381,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * the Windows transport so a suppressed notification never costs a PowerShell
    * process, and so a delivered toast never also rings the bell. The Windows
    * fallback re-enters through `ringTaskCompletion`, which carries this answer
-   * instead of asking the time-varying question again, after the awaits.
+   * instead of asking the focus question again after the awaits. Explicit off
+   * still revokes a pending native dispatch; an already started host is not recalled.
    */
   const taskCompletionAlertsEnabled = (): boolean =>
     process.stdout.isTTY === true
@@ -401,7 +402,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     }
     void deliverTaskCompletionOnWindows(title, message, backendId, {
       pluginManager: pluginManagerOf(ctx),
-      toast: showWindowsToast,
+      toast: input => showWindowsToast({ ...input, canDispatch: () => notificationSettings.condition !== 'off' }),
       terminal: (fallbackTitle, fallbackMessage) => ringTaskCompletion(taskNotifier, notificationSettings, fallbackTitle, fallbackMessage),
     })
   }

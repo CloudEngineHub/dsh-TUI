@@ -340,6 +340,8 @@ export type WindowsToastResult =
   | { status: 'shown' }
   /** An external notifier owns task completions: no toast and no bell (AC-6). */
   | { status: 'yielded' }
+  /** An explicit off revoked this pending delivery: no toast and no bell. */
+  | { status: 'suppressed' }
   /** Nothing was delivered: the caller falls back to the bell, never to silence. */
   | { status: 'unavailable', reason: WindowsToastFailure, detail?: string }
 
@@ -350,6 +352,8 @@ export interface WindowsToastInput {
   message?: string
   /** The host confirmed an enabled, active DSH notifier in its live inventory. */
   externalNotifierActive?: boolean
+  /** Recheck explicit off before dispatch, without repeating the focus gate. */
+  canDispatch?: () => boolean
 }
 
 /** The two overrides a caller may need before a notification exists. */
@@ -458,6 +462,7 @@ export function createWindowsToastTransport(options: WindowsToastTransportOption
   return {
     async notify(input: WindowsToastInput): Promise<WindowsToastResult> {
       try {
+        if (input.canDispatch?.() === false) return { status: 'suppressed' }
         const judgement = available({ externalNotifierActive: input.externalNotifierActive })
         if (!judgement.available) {
           if (judgement.reason === 'yielded') return { status: 'yielded' }
@@ -465,6 +470,7 @@ export function createWindowsToastTransport(options: WindowsToastTransportOption
         }
         const registration = await resolve()
         if (!registration.ok) return unavailable(registration.reason, registration.detail)
+        if (input.canDispatch?.() === false) return { status: 'suppressed' }
         return await show(input, registration.tools.powershell)
       } catch (error) {
         // The caller's path is fire-and-forget (the renderer cannot await a
