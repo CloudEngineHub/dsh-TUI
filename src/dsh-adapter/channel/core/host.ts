@@ -222,6 +222,8 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   let headPath: string | undefined
   /** The HEAD text the last probe was issued against. */
   let signature: string | undefined
+  /** A transient failure retries the same HEAD on the next poll. */
+  let retryProbe = false
   /** Tickets handed out to probes; only the newest holder may publish. */
   let issued = 0
 
@@ -243,6 +245,7 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     // Baseline at issue time: a checkout landing while the shell runs still
     // differs from it and triggers the next tick.
     signature = readHeadSignature(resolveHead())
+    retryProbe = false
     const shell = ctx.get('shell') as ForegroundShell | undefined
     if (!shell) return
     // Capture the requested cwd: a /resume landing while this query is in
@@ -261,10 +264,13 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
         // A newer probe already speaks for the workspace and its baseline
         // matches HEAD, so nothing would re-probe after this slower reply.
         if (ticket !== issued) return
-        // A timed-out probe reports whatever it captured, often nothing: that
-        // is not "no branch", and the consumed signature would keep us quiet.
-        if (result.timedOut) return
         if (!deps.owner.current() || state.cwd !== requestedCwd) return
+        // A timed-out probe reports whatever it captured, often nothing: that
+        // is not "no branch". Retain the value and retry this HEAD.
+        if (result.timedOut) {
+          retryProbe = true
+          return
+        }
         const branch = result.stdout.text.trim()
         // A detached HEAD (or a cwd outside any repository) answers nothing:
         // clear it, which is also what a cold start would show.
@@ -276,9 +282,9 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
         state.emit()
       })
       .catch(() => {
-        // Git branch detection is best-effort; on Windows the sandbox
-        // backend may be unavailable (no confinement yet) or the cwd may
-        // not be a git repo. Either way the statusline simply stays blank.
+        // Only the current probe may request a retry; an older rejection must
+        // not invalidate a successful newer result.
+        if (ticket === issued && deps.owner.current() && state.cwd === requestedCwd) retryProbe = true
       })
   }
 
@@ -292,12 +298,14 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
       // the remote or sandboxed case, where the shell is the only authority.
       if (signature === undefined) return
       signature = undefined
+      retryProbe = false
+      issued += 1
       if (state.gitBranch === undefined) return
       state.gitBranch = undefined
       state.emit()
       return
     }
-    if (next === signature) return
+    if (next === signature && !retryProbe) return
     probe(false)
   }, BRANCH_HEAD_POLL_MS)
   timer.unref?.()

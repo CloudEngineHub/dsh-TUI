@@ -22,7 +22,8 @@
  *   both with an absolute target and with the relative one git writes for a
  *   submodule;
  * - a reply from an older probe that lands after a newer one does not
- *   overwrite the newer branch.
+ *   overwrite the newer branch;
+ * - a failed probe retries, and a reply after HEAD disappears stays discarded.
  *
  * Reads the compiled output, so `pnpm compile` must have produced `lib/types/`:
  *   node scripts/verify-git-branch-refresh.mjs
@@ -100,6 +101,7 @@ function openChannel(cwd, branch) {
   let parkedReplies = 0
   const probes = []
   const gates = []
+  const failures = []
   const shell = {
     resolve(request) {
       probes.push(request)
@@ -110,6 +112,7 @@ function openChannel(cwd, branch) {
       // when the probe was sent, which is what a slow shell delivers.
       const reply = stdout
       const parked = held
+      const failure = failures.shift()
       let open
       const gate = new Promise(resolve => { open = resolve })
       if (parked) gates.push(open)
@@ -118,7 +121,8 @@ function openChannel(cwd, branch) {
         async result() {
           await gate
           if (parked) parkedReplies += 1
-          return { stdout: { text: reply }, stderr: { text: '' }, timedOut: false }
+          if (failure === 'reject') throw new Error('temporary shell failure')
+          return { stdout: { text: reply }, stderr: { text: '' }, timedOut: failure === 'timeout' }
         },
       }
     },
@@ -133,6 +137,7 @@ function openChannel(cwd, branch) {
     probes,
     /** What the next probe answers; '' is a detached HEAD (no branch name). */
     answer(text) { stdout = text },
+    failNext(kind) { failures.push(kind) },
     /** Park every later probe; `gates` then holds their open callbacks. */
     hold() { held = true },
     gates,
@@ -189,6 +194,22 @@ try {
     assert.ok(await settled(() => channel.gitBranch === 'feature-x', { timeoutMs: DETECT_TIMEOUT_MS }),
       `the breadcrumb must follow the new HEAD without rebuilding the channel (saw ${String(channel.gitBranch)})`)
   })
+
+  for (const failure of ['timeout', 'reject']) {
+    const retryRepo = makeRepo()
+    await scenario(`a ${failure} retries without another HEAD change`, { cwd: retryRepo, branch: 'main' }, async ({ channel, answer, failNext, probes }) => {
+      assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+      failNext(failure)
+      answer('feature-retry')
+      writeFileSync(join(retryRepo, '.git', 'HEAD'), HEAD_REF('feature-retry'))
+      assert.ok(await settled(() => probes.length === 2, { timeoutMs: DETECT_TIMEOUT_MS }),
+        'the changed HEAD must issue the failing probe')
+      assert.equal(channel.gitBranch, 'main', 'a failed probe must retain the last known branch')
+      assert.ok(await settled(() => channel.gitBranch === 'feature-retry', { timeoutMs: DETECT_TIMEOUT_MS }),
+        'the same HEAD must be retried after the transient failure')
+      assert.equal(probes.length, 3, 'one retry must recover the branch')
+    })
+  }
 
   // 1 Hz polling lets two probes overlap (the host shell does not serialize
   // them), so a reply says what was checked out when it was *sent*: the older
@@ -266,12 +287,20 @@ try {
   })
 
   const vanishedRepo = makeRepo()
-  await scenario('a vanishing HEAD clears the breadcrumb', { cwd: vanishedRepo, branch: 'main' }, async ({ channel }) => {
+  await scenario('a vanishing HEAD clears the breadcrumb and rejects an in-flight reply', { cwd: vanishedRepo, branch: 'main' }, async ({ channel, answer, hold, gates, parkedReplies }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
+    hold()
+    answer('feature-vanished')
+    writeFileSync(join(vanishedRepo, '.git', 'HEAD'), HEAD_REF('feature-vanished'))
+    assert.ok(await settled(() => gates.length === 1, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'a probe must be in flight when HEAD disappears')
     rmSync(join(vanishedRepo, '.git'), { recursive: true, force: true })
     assert.ok(await settled(() => channel.gitBranch === undefined, { timeoutMs: DETECT_TIMEOUT_MS }),
       `a repository that disappears must clear the branch instead of keeping it (saw ${String(channel.gitBranch)})`)
+    gates[0]()
+    assert.ok(await settled(() => parkedReplies() === 1, { timeoutMs: DETECT_TIMEOUT_MS }))
+    assert.equal(channel.gitBranch, undefined, 'a reply for the vanished HEAD must not restore the branch')
   })
 
   const noRepo = tempDir('dsh-tui-no-repo-')
