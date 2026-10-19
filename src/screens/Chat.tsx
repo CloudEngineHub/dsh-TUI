@@ -10,7 +10,7 @@ import { envThemeOverride } from '../components/design-system/ThemeProvider.js'
 import { resolveBrand, setActiveBrand } from '../branding.js'
 import { hasPath } from '../dsh-adapter/settingsEditor.js'
 import { planReload, type ReloadKind } from '../reload.js'
-import { AlternateScreen, Box, Image, Text, InputCaret, useInput, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
+import { AlternateScreen, Box, Image, Text, InputCaret, useInput, useApp, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
 import * as tuiKit from '../ui.js'
 import { usePageInset } from '../components/PageMargin.js'
 import { POINTER } from '../terminal-utils/figures.js'
@@ -59,6 +59,8 @@ import type { DOMElement } from '../ink/dom.js'
 import { useSearchHighlight } from '../ink/hooks/use-search-highlight.js'
 import { useTerminalTitle } from '../ink/hooks/use-terminal-title.js'
 import { useTerminalFocus } from '../ink/hooks/use-terminal-focus.js'
+import { useProgramStatus, type ProgramBlockedPrompt } from '../ink/hooks/use-program-status.js'
+import { supportsProgramStatus } from '../ink/termio/osc7501.js'
 import { useCopyOnSelect } from '../ink/hooks/use-copy-on-select.js'
 import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
@@ -617,8 +619,9 @@ export function Chat({
   // the process (beta.3; the reveal-store half was PR #680, this is the
   // channel half — the surviving source on Windows timer granularity).
   useExternalVersion(channel.subscribe, () => channel.version)
-  // Re-render on language switches so the whole UI hot-swaps its strings.
-  React.useSyncExternalStore(subscribeLang, getLang)
+  // Re-render on language switches so the whole UI hot-swaps its strings; the
+  // value itself is what memoized strings key their language dependency on.
+  const lang = React.useSyncExternalStore(subscribeLang, getLang)
   const promptEditorOpen = usePromptEditorOpen()
   // The pending ask-user-question (DSH user-interaction seam): the model's
   // `ask_user_question` tool parks here until the panel is answered.
@@ -2368,6 +2371,9 @@ export function Chat({
   // `✦` otherwise. dsh-TUI brands the idle prefix with the DeepSeek whale.
   const [titleFrame, setTitleFrame] = React.useState(0)
   const terminalFocused = useTerminalFocus()
+  // Gate the stream this app renders to; embedders may replace process.stdout.
+  const { stdout: appStdout } = useApp()
+  const programStatusEnabled = React.useMemo(() => supportsProgramStatus(appStdout.isTTY === true), [appStdout])
   // Mouse text selection auto-copy: active only in
   // fullscreen (<AlternateScreen> supplies mouse tracking); a no-op
   // subscription in inline mode, where selection belongs to the terminal.
@@ -2437,6 +2443,40 @@ export function Chat({
   useTerminalTitle(
     `${titlePrefix} 🐋 ${channel.sessionTitle}`,
   )
+
+  // OSC 7501 program status: tell the terminal (and any agentic inbox) whether
+  // this session is working, parked on the user, or finished. Precedence
+  // matches the UI's own: a parked ask outranks a running turn. The pending
+  // prompt is reduced to the one-line message the protocol carries.
+  const programStatusBlocked = React.useMemo<ProgramBlockedPrompt | null>(() => {
+    if (approvalSnapshot !== null) {
+      const detail = approvalSnapshot.command ?? approvalSnapshot.reason ?? approvalSnapshot.title
+      return {
+        kind: 'permission',
+        message: t('program-status-approval', {
+          tool: detail === undefined
+            ? approvalSnapshot.toolName
+            : `${approvalSnapshot.toolName} · ${detail}`,
+        }),
+      }
+    }
+    if (dialogSnapshot !== null) {
+      return { kind: 'question', message: t('program-status-dialog', { title: dialogSnapshot.title }) }
+    }
+    if (questionSnapshot !== null) {
+      const { header, question, purpose } = questionSnapshot.question
+      return { kind: purpose === 'auth' ? 'auth' : 'question', message: t('program-status-question', { question: header ?? question }) }
+    }
+    return null
+  }, [approvalSnapshot, dialogSnapshot, questionSnapshot, lang])
+  // The hook reads the channel's own projected fields (`working`,
+  // `turnOutcome` from `turn.end.reason`, the title and the session id), so
+  // the usage ledger's stale outcome can never stand in for the turn's close.
+  useProgramStatus({
+    channel,
+    blocked: programStatusBlocked,
+    enabled: programStatusEnabled,
+  })
 
   const handleWorkspaceResult = (result: TuiWorkspaceCommandResult): void => {
     workspaceFlowAbortRef.current = null

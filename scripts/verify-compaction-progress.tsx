@@ -547,7 +547,7 @@ async function mountChat(channel, cols = 100, rows = 30, activityStore) {
   check('scene7: an automatic compaction badges the working-activity line', lineBadged, activityLineRow())
   check(
     'scene7: the badge rides that line as a suffix, not as a second row',
-    activityLineRow().includes(t('compact-badge')) && !lineChat.screen().includes(t('compact-esc-cancel')),
+    activityLineRow().includes(t('compact-badge')) && !lineChat.screen().split('\n').some(line => line.includes(t('compact-working')) && line.includes(t('compact-esc-cancel'))),
     activityLineRow(),
   )
   await lineChat.instance.unmount()

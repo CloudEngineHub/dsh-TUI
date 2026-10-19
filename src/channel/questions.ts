@@ -40,6 +40,8 @@ export interface QuestionOption {
 export interface QuestionItem {
   readonly id: string
   readonly question: string
+  /** Explicit authentication purpose; absent means an ordinary question. */
+  readonly purpose?: 'auth'
   readonly detail?: string
   readonly header?: string
   readonly options?: readonly QuestionOption[]

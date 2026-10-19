@@ -34,7 +34,7 @@ export function createCodexAuthCapability(runtime: CodexAuthRuntime, emit: (even
     const id = 'codex-login:' + randomUUID()
     const answer = disposed ? Promise.resolve(undefined) : new Promise<QuestionAnswers | undefined>(resolve => {
       pending.set(id, resolve)
-      emit([{ type: 'question.request', request: { requestId: id, questions: [question] } }])
+      emit([{ type: 'question.request', request: { requestId: id, questions: [{ ...question, purpose: 'auth' }] } }])
     })
     return { answer, withdraw: () => { settle(id) } }
   }
