@@ -285,7 +285,19 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   const timer = setInterval(() => {
     if (!deps.owner.current()) return
     const next = readHeadSignature(resolveHead())
-    if (next === undefined || next === signature) return
+    if (next === undefined) {
+      // The HEAD this process was following is gone (repository removed, .git
+      // unreadable), so stop claiming a branch it can no longer verify. A
+      // workspace whose HEAD was never readable stays quiet instead: that is
+      // the remote or sandboxed case, where the shell is the only authority.
+      if (signature === undefined) return
+      signature = undefined
+      if (state.gitBranch === undefined) return
+      state.gitBranch = undefined
+      state.emit()
+      return
+    }
+    if (next === signature) return
     probe(false)
   }, BRANCH_HEAD_POLL_MS)
   timer.unref?.()

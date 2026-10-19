@@ -243,17 +243,35 @@ try {
   })
 
   const releasedRepo = makeRepo()
-  await scenario('releasing the channel stops the refresh', { cwd: releasedRepo, branch: 'main' }, async ({ channel, probes, answer }) => {
+  await scenario('releasing the channel stops the refresh', { cwd: releasedRepo, branch: 'main' }, async ({ channel, probes, answer, hold, gates, parkedReplies }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
-    channel.releaseContributions()
-    const probesAtRelease = probes.length
+    // Park a probe in flight, then release the channel: the reply that lands
+    // afterwards is the one a released channel must ignore. Releasing with no
+    // probe pending would leave the "late reply" half of this check untested.
+    hold()
     writeFileSync(join(releasedRepo, '.git', 'HEAD'), HEAD_REF('after-release'))
     answer('after-release\n')
+    assert.ok(await settled(() => gates.length === 1, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the HEAD change must issue a probe before the channel is released')
+    channel.releaseContributions()
+    const probesAtRelease = probes.length
+    gates[0]()
+    assert.ok(await settled(() => parkedReplies() === 1, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the parked reply must be delivered while the channel is released')
     // 固定窗:探针 a released channel must never probe again: that is an invariant, so it needs an observation window
     await sleep(POLL_WINDOW_MS)
     assert.equal(probes.length, probesAtRelease, 'a released channel must not probe the shell again')
-    assert.equal(channel.gitBranch, 'main', 'a late reply must not reach a released channel')
+    assert.equal(channel.gitBranch, 'main', 'a reply landing after release must not reach the channel')
+  })
+
+  const vanishedRepo = makeRepo()
+  await scenario('a vanishing HEAD clears the breadcrumb', { cwd: vanishedRepo, branch: 'main' }, async ({ channel }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the boot probe must publish the branch the host shell reports')
+    rmSync(join(vanishedRepo, '.git'), { recursive: true, force: true })
+    assert.ok(await settled(() => channel.gitBranch === undefined, { timeoutMs: DETECT_TIMEOUT_MS }),
+      `a repository that disappears must clear the branch instead of keeping it (saw ${String(channel.gitBranch)})`)
   })
 
   const noRepo = tempDir('dsh-tui-no-repo-')
