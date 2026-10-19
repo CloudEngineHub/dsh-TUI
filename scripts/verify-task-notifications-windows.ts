@@ -57,6 +57,8 @@ const {
 const { createTerminalNotifier } = await import('../src/ink/terminal-notification.js')
 const { deliverTaskCompletionOnWindows, ringTaskCompletion } = await import('../src/dsh-adapter/plugin.js')
 const { resetTerminalFocusState, setTerminalFocused } = await import('../src/ink/terminal-focus-state.js')
+const { Context } = await import('@deepseek-ai/cordis')
+const { channelOwnerCurrent, createChannelOwner, registerChannelOwner } = await import('../src/dsh-adapter/channel/owner.js')
 
 /** The title the renderer passes today (`src/i18n.ts`, AC-1). */
 const TITLE = 'dsh-TUI · 任务已完成'
@@ -176,6 +178,7 @@ async function deliverCompletion(
     registry?: ReturnType<typeof recordingRegistry>
     runner?: ReturnType<typeof recordingRunner>
     notifications?: TaskNotificationSettings
+    channel?: object
   } = {},
 ): Promise<Chain> {
   const registry = options.registry ?? recordingRegistry()
@@ -211,13 +214,14 @@ async function deliverCompletion(
   process.stderr.write = ((chunk: unknown): boolean => { debug.push(String(chunk)); return true }) as typeof process.stderr.write
   try {
     await deliverTaskCompletionOnWindows(TITLE, message, options.backendId ?? 'dsh', {
+      canDispatch: () => (options.channel === undefined || channelOwnerCurrent(options.channel)) && notifications.condition !== 'off',
       pluginManager: { listPlugins: async () => {
         if (options.pluginReadFails) throw new Error('inventory unavailable')
         return options.readPlugins ? options.readPlugins() : options.plugins ?? []
       } },
       toast: async input => {
         externalNotifierStates.push(input.externalNotifierActive)
-        const result = await transport.notify({ ...input, canDispatch: () => notifications.condition !== 'off' })
+        const result = await transport.notify(input)
         toastResults.push(result)
         return result
       },
@@ -410,6 +414,59 @@ await check('explicit off suppresses pending dispatch, while focus and dispatche
     { phase: 'registration', result: [{ status: 'suppressed' }], registryWrites: 2, hostCalls: 0, fallback: [], bell: [] },
     { phase: 'refocused', result: [{ status: 'shown' }], registryWrites: 2, hostCalls: 1, fallback: [], bell: [] },
     { phase: 'dispatched', result: [{ status: 'shown' }], registryWrites: 2, hostCalls: 1, fallback: [], bell: [] },
+  ])
+})
+
+await check('a disposed channel stops pending native dispatch and late failure BEL without disabling its replacement', async () => {
+  const observed = []
+  for (const phase of ['inventory', 'registration', 'failure'] as const) {
+    const ctx = new Context()
+    const channel = {}
+    const owner = createChannelOwner()
+    registerChannelOwner(channel, owner)
+    ctx.effect(() => () => owner.dispose())
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const pause = async (): Promise<void> => { entered.resolve(); await release.promise }
+    const registry = recordingRegistry(async name => {
+      if (phase === 'registration' && name === 'DisplayName') await pause()
+      return undefined
+    })
+    const runner = recordingRunner(async () => {
+      if (phase === 'failure') { await pause(); return { code: 1, stderr: 'late toast failure' } }
+      return { code: 0 }
+    })
+    const pending = deliverCompletion(NASTY, {
+      channel, registry, runner,
+      readPlugins: async () => { if (phase === 'inventory') await pause(); return [] },
+    })
+    await entered.promise
+    await ctx.fiber.dispose()
+    assert.equal(channelOwnerCurrent(channel), false, 'the real Cordis effect released this channel owner')
+    release.resolve()
+    const chain = await pending
+    const replacement = {}
+    const replacementOwner = createChannelOwner()
+    registerChannelOwner(replacement, replacementOwner)
+    try {
+      const next = await deliverCompletion('replacement channel', { channel: replacement })
+      observed.push({
+        phase,
+        status: chain.toastResults[0]?.status,
+        hostCalls: chain.runner.calls.length,
+        fallback: chain.delivered.length,
+        bell: chain.bell,
+        replacementStatus: next.toastResults[0]?.status,
+        replacementHostCalls: next.runner.calls.length,
+      })
+    } finally {
+      replacementOwner.dispose()
+    }
+  }
+  assert.deepEqual(observed, [
+    { phase: 'inventory', status: 'suppressed', hostCalls: 0, fallback: 0, bell: [], replacementStatus: 'shown', replacementHostCalls: 1 },
+    { phase: 'registration', status: 'suppressed', hostCalls: 0, fallback: 0, bell: [], replacementStatus: 'shown', replacementHostCalls: 1 },
+    { phase: 'failure', status: 'unavailable', hostCalls: 1, fallback: 0, bell: [], replacementStatus: 'shown', replacementHostCalls: 1 },
   ])
 })
 

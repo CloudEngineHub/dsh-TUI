@@ -340,7 +340,7 @@ export type WindowsToastResult =
   | { status: 'shown' }
   /** An external notifier owns task completions: no toast and no bell (AC-6). */
   | { status: 'yielded' }
-  /** An explicit off revoked this pending delivery: no toast and no bell. */
+  /** The caller revoked this pending delivery: no toast and no bell. */
   | { status: 'suppressed' }
   /** Nothing was delivered: the caller falls back to the bell, never to silence. */
   | { status: 'unavailable', reason: WindowsToastFailure, detail?: string }
@@ -352,7 +352,7 @@ export interface WindowsToastInput {
   message?: string
   /** The host confirmed an enabled, active DSH notifier in its live inventory. */
   externalNotifierActive?: boolean
-  /** Recheck explicit off before dispatch, without repeating the focus gate. */
+  /** Recheck live permission before dispatch, without repeating the focus gate. */
   canDispatch?: () => boolean
 }
 

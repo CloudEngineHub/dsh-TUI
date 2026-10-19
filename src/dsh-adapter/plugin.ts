@@ -11,6 +11,7 @@ import Schema from '@deepseek-ai/schemastery'
 import { Config } from './index.js'
 import { configValues, createSettingsScope, resolveSettingsNamespace, type RuntimeConfig } from './compat/settings.js'
 import { createChannel } from './channel.js'
+import { channelOwnerCurrent } from './channel/owner.js'
 import { createDshSession } from './backend/session.js'
 import { createTuiSettingsService, type DelegateSettings } from './tui-settings.js'
 import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
@@ -223,6 +224,8 @@ export interface RuntimeApplyOptions {
 export interface TaskCompletionDelivery {
   /** Live inventory from the running profile; installed packages alone do not own events. */
   pluginManager?: Pick<PluginManagerView, 'listPlugins'>
+  /** Live owner/settings permission for pending native dispatch and fallback. */
+  canDispatch?: () => boolean
   /** Hand the completion to the native toast transport (D8 keeps the dedup inside it). */
   toast(input: WindowsToastInput): Promise<WindowsToastResult>
   /** The terminal bell, used when the native transport is unavailable. */
@@ -338,8 +341,9 @@ export async function deliverTaskCompletionOnWindows(
     title,
     message,
     externalNotifierActive,
+    canDispatch: delivery.canDispatch,
   })
-  if (result.status !== 'unavailable') return
+  if (result.status !== 'unavailable' || delivery.canDispatch?.() === false) return
   // AC-5 wants the bell, not a silent loss - and the reason is what makes the
   // pair "toast missing + bell rang" explainable afterwards. Ring first, then
   // report: the port rings for a completion the gate already approved, and a line
@@ -381,8 +385,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * the Windows transport so a suppressed notification never costs a PowerShell
    * process, and so a delivered toast never also rings the bell. The Windows
    * fallback re-enters through `ringTaskCompletion`, which carries this answer
-   * instead of asking the focus question again after the awaits. Explicit off
-   * still revokes a pending native dispatch; an already started host is not recalled.
+   * instead of asking the focus question again after the awaits. Explicit off or
+   * owner release revokes pending dispatch; an already started host is not recalled.
    */
   const taskCompletionAlertsEnabled = (): boolean =>
     process.stdout.isTTY === true
@@ -402,7 +406,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     }
     void deliverTaskCompletionOnWindows(title, message, backendId, {
       pluginManager: pluginManagerOf(ctx),
-      toast: input => showWindowsToast({ ...input, canDispatch: () => notificationSettings.condition !== 'off' }),
+      canDispatch: () => channelOwnerCurrent(rawChannel) && notificationSettings.condition !== 'off',
+      toast: showWindowsToast,
       terminal: (fallbackTitle, fallbackMessage) => ringTaskCompletion(taskNotifier, notificationSettings, fallbackTitle, fallbackMessage),
     })
   }
