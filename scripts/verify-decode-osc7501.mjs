@@ -469,7 +469,8 @@ try {
       await waitFor(() => diagnostics.includes('不是普通文件'), '目录错误诊断', 2000)
       assert.ok(!NO_CONTROL.test(diagnostics))
       await new Promise(resolve => setTimeout(resolve, 450))
-      assert.equal(diagnostics.split('不是普通文件').length - 1, 1, '同一读取错误不能每次轮询重复打印')
+      const directoryDiagnostic = `无法读取 ${escapeForDisplay(followPath)}：输入不是普通文件`
+      assert.deepEqual(diagnostics.trim().split(/\r?\n/u), [directoryDiagnostic], '暂缺时不应有诊断，持续目录错误只报告一次')
     })
     rmSync(followPath, { recursive: true })
     writeFileSync(followPath, initialLog + oversizedFrame)
