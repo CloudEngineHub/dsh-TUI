@@ -223,7 +223,7 @@ export interface RuntimeApplyOptions {
 export interface TaskCompletionDelivery {
   /** Hand the completion to the native toast transport (D8 keeps the dedup inside it). */
   toast(input: WindowsToastInput): Promise<WindowsToastResult>
-  /** The terminal path: whichever of OSC 9/99/777 or the bell this terminal gets. */
+  /** The terminal bell, used when the native transport is unavailable. */
   terminal(title: string, message: string): void
 }
 
@@ -292,11 +292,7 @@ export function createTaskNotificationSettings(
  * @param message - The single-line summary; empty rings for the title alone.
  */
 export function ringTaskCompletion(notifier: TerminalNotifier, settings: TaskNotificationSettings, title: string, message: string): void {
-  if (settings.condition !== 'unfocused') {
-    notifier.notify(title, message)
-    return
-  }
-  notifier.configure('always', settings.method)
+  notifier.configure(settings.condition === 'unfocused' ? 'always' : settings.condition, 'bel')
   try {
     notifier.notify(title, message)
   } finally {
@@ -316,17 +312,19 @@ export function ringTaskCompletion(notifier: TerminalNotifier, settings: TaskNot
  * without a toast, a registry write or a child process.
  * @param title - The localized title.
  * @param message - The single-line summary; empty shows the title alone.
+ * @param backendId - The session that completed; a DSH plugin only covers DSH events.
  * @param delivery - The toast port, and the terminal path to fall back to.
  */
 export async function deliverTaskCompletionOnWindows(
   title: string,
   message: string,
+  backendId: string,
   delivery: TaskCompletionDelivery,
 ): Promise<void> {
   const result = await delivery.toast({
     title,
     message,
-    profilePackageJsonPath: taskCompletionProfileDocument(),
+    profilePackageJsonPath: backendId === 'dsh' ? taskCompletionProfileDocument() : undefined,
   })
   if (result.status !== 'unavailable') return
   // AC-5 wants the bell, not a silent loss - and the reason is what makes the
@@ -398,7 +396,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * Announce a finished task: the channel's `onTaskComplete` payload and gate,
    * with the Windows method resolved first (`auto` picks the toast there, D2).
    */
-  const announceTaskCompletion = (preview: string | undefined): void => {
+  const announceTaskCompletion = (preview: string | undefined, backendId: string): void => {
     if (!taskCompletionAlertsEnabled()) return
     const title = t('task-complete-notification')
     const message = preview ?? ''
@@ -406,7 +404,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       taskNotifier.notify(title, message)
       return
     }
-    void deliverTaskCompletionOnWindows(title, message, {
+    void deliverTaskCompletionOnWindows(title, message, backendId, {
       toast: showWindowsToast,
       terminal: (fallbackTitle, fallbackMessage) => ringTaskCompletion(taskNotifier, notificationSettings, fallbackTitle, fallbackMessage),
     })
@@ -1091,7 +1089,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // channel's own settings reads look the section up by it.
     settingsNs: tuiSettingsNs,
     onTaskComplete: preview => {
-      if (!shadow) announceTaskCompletion(preview)
+      if (!shadow) announceTaskCompletion(preview, rawChannel.sessionRef.backendId)
     },
     settingsService: tuiSettings,
     // The backend reports its model with its first turn (`system/init`);

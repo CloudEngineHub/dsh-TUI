@@ -164,6 +164,7 @@ async function deliverCompletion(
   message: string,
   options: {
     platform?: NodeJS.Platform
+    backendId?: string
     registry?: ReturnType<typeof recordingRegistry>
     notifications?: TaskNotificationSettings
   } = {},
@@ -200,7 +201,7 @@ async function deliverCompletion(
   process.env.DSH_TUI_DEBUG = '1'
   process.stderr.write = ((chunk: unknown): boolean => { debug.push(String(chunk)); return true }) as typeof process.stderr.write
   try {
-    await deliverTaskCompletionOnWindows(TITLE, message, {
+    await deliverTaskCompletionOnWindows(TITLE, message, options.backendId ?? 'dsh', {
       toast: async input => {
         profileDocuments.push(input.profilePackageJsonPath)
         const result = await transport.notify(input)
@@ -282,6 +283,17 @@ await check('a profile that names an external notifier delivers nothing at all',
   assert.deepEqual(chain.debug, [], 'yielding is not a fallback, so there is nothing to explain')
 })
 
+await check('a DSH notifier dependency does not swallow other backends\' completions', async () => {
+  writeProfile({ [EXTERNAL_NOTIFIER_PACKAGES[0]]: '^1.0.0' })
+  for (const backendId of ['codex', 'claude']) {
+    const chain = await deliverCompletion(NASTY, { backendId })
+    assert.deepEqual(chain.profileDocuments, [undefined], `${backendId}: DSH plugins do not own this session`)
+    assert.equal(chain.toastResults[0]?.status, 'shown')
+    assert.equal(chain.runner.calls.length, 1, 'the built-in toast still delivers')
+    assert.deepEqual(chain.bell, [], 'one delivered notification')
+  }
+})
+
 // --- AC-5: a refusal degrades to the bell, never to silence --------------------
 
 await check('a refused AUMID falls back to the bell and leaves the reason in the log', async () => {
@@ -293,6 +305,20 @@ await check('a refused AUMID falls back to the bell and leaves the reason in the
   assert.deepEqual(chain.runner.calls, [], 'a toast that cannot display is not spawned')
   const logged = chain.debug.join('')
   assert.match(logged, /aumid-registration-failed/u, 'the log names the reason (the pair "no toast + bell" has to be explainable)')
+})
+
+await check('native toast failure rings BEL even when the terminal supports OSC notifications', async () => {
+  writeProfile({})
+  const previous = process.env.TERM_PROGRAM
+  process.env.TERM_PROGRAM = 'WezTerm'
+  try {
+    const registry = recordingRegistry(name => (name === 'DisplayName' ? REGISTRY_REFUSED : undefined))
+    const chain = await deliverCompletion(NASTY, { registry, notifications: { condition: 'always', method: 'auto' } })
+    assert.deepEqual(chain.bell, ['\x07'], 'the failed native path promises a bell')
+  } finally {
+    if (previous === undefined) delete process.env.TERM_PROGRAM
+    else process.env.TERM_PROGRAM = previous
+  }
 })
 
 await check('off Windows nothing touches the registry or a child process, and the bell still rings', async () => {

@@ -213,10 +213,15 @@ try {
   // terminal protocol as before everywhere else (D12/AC-7). The platform is an
   // argument, so a Windows host asserts the POSIX paths too.
   for (const [method, expected] of [['auto', 'windows'], ['windows', 'windows'], ['osc9', 'osc9'], ['bel', 'bel']] as const) {
-    assert.equal(resolveNotificationMethod(method, 'win32'), expected, `${method} on win32`)
+    assert.equal(resolveNotificationMethod(method, 'win32', {}), expected, `${method} on win32`)
   }
   process.env.TERM_PROGRAM = 'ghostty'
   assert.equal(resolveNotificationMethod('windows', 'darwin'), 'osc777', 'an explicit windows is not a POSIX transport')
+  for (const variable of ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY']) {
+    const env = { [variable]: 'remote-session' }
+    assert.equal(resolveNotificationMethod('auto', 'win32', env), 'osc777', `${variable}: auto notifies the attached terminal, not the remote Windows desktop`)
+    assert.equal(resolveNotificationMethod('windows', 'win32', env), 'windows', 'an explicit native transport remains an override')
+  }
   delete process.env.TERM_PROGRAM
   notifier.configure('always', 'osc9')
   setTerminalFocused(true)
