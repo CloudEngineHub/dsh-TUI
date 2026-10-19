@@ -181,7 +181,7 @@ async function scenario(name, { cwd, branch }, body) {
 
 try {
   const repo = makeRepo()
-  await scenario('AC-1 the breadcrumb follows a HEAD rewritten outside the TUI', { cwd: repo, branch: 'main' }, async ({ channel, answer }) => {
+  await scenario('the breadcrumb follows a HEAD rewritten outside the TUI', { cwd: repo, branch: 'main' }, async ({ channel, answer }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
     writeFileSync(join(repo, '.git', 'HEAD'), HEAD_REF('feature-x'))
@@ -194,7 +194,7 @@ try {
   // them), so a reply says what was checked out when it was *sent*: the older
   // one landing last must not win.
   const orderedRepo = makeRepo()
-  await scenario('AC-1b a slow reply must not overwrite a newer branch', { cwd: orderedRepo, branch: 'main' }, async ({ channel, answer, hold, gates, parkedReplies }) => {
+  await scenario('a slow reply must not overwrite a newer branch', { cwd: orderedRepo, branch: 'main' }, async ({ channel, answer, hold, gates, parkedReplies }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
     hold()
@@ -219,7 +219,7 @@ try {
   })
 
   const detachedRepo = makeRepo()
-  await scenario('AC-2 a detached HEAD clears the breadcrumb', { cwd: detachedRepo, branch: 'main' }, async ({ channel, answer }) => {
+  await scenario('a detached HEAD clears the breadcrumb', { cwd: detachedRepo, branch: 'main' }, async ({ channel, answer }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
     writeFileSync(join(detachedRepo, '.git', 'HEAD'), HEAD_DETACHED)
@@ -229,7 +229,7 @@ try {
   })
 
   const steadyRepo = makeRepo()
-  await scenario('AC-3 an unchanged HEAD neither re-probes nor redraws', { cwd: steadyRepo, branch: 'main' }, async ({ channel, probes }) => {
+  await scenario('an unchanged HEAD neither re-probes nor redraws', { cwd: steadyRepo, branch: 'main' }, async ({ channel, probes }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
     // 固定窗:探针 let the boot probe and any first-tick baseline capture land; only steady state is the invariant
@@ -243,7 +243,7 @@ try {
   })
 
   const releasedRepo = makeRepo()
-  await scenario('AC-4 releasing the channel stops the refresh', { cwd: releasedRepo, branch: 'main' }, async ({ channel, probes, answer }) => {
+  await scenario('releasing the channel stops the refresh', { cwd: releasedRepo, branch: 'main' }, async ({ channel, probes, answer }) => {
     assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }),
       'the boot probe must publish the branch the host shell reports')
     channel.releaseContributions()
@@ -257,7 +257,7 @@ try {
   })
 
   const noRepo = tempDir('dsh-tui-no-repo-')
-  await scenario('AC-5 a cwd without .git stays quiet', { cwd: noRepo, branch: 'main' }, async ({ channel, probes }) => {
+  await scenario('a cwd without .git stays quiet', { cwd: noRepo, branch: 'main' }, async ({ channel, probes }) => {
     // 固定窗:探针 no `.git` means no pollable ready anchor: let boot and one poll period pass first
     await sleep(POLL_WINDOW_MS)
     const probesAtBoot = probes.length
@@ -282,8 +282,8 @@ try {
       `a .git gitdir file must resolve to the worktree's HEAD (saw ${String(channel.gitBranch)})`)
   })
 
-  await gitdirScenario('AC-6 a linked worktree follows its git dir HEAD', makeLinkedWorktree())
-  await gitdirScenario('AC-6b a relative gitdir file resolves against the worktree', makeSubmodule())
+  await gitdirScenario('a linked worktree follows its git dir HEAD', makeLinkedWorktree())
+  await gitdirScenario('a relative gitdir file resolves against the worktree', makeSubmodule())
 } finally {
   for (const dir of scratch) rmSync(dir, { recursive: true, force: true })
 }
