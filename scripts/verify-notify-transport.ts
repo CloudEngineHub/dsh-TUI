@@ -11,7 +11,7 @@
  * Run: node --import tsx/esm scripts/verify-notify-transport.ts
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { stringWidth } from '../src/ink/stringWidth.js'
@@ -41,10 +41,8 @@ process.env.DSH_HOME = join(fakeHome, '.dsh')
 
 const {
   AUMID_REGISTRY_KEY,
-  EXTERNAL_NOTIFIER_PACKAGES,
   createWindowsToastTransport,
   escapeXmlText,
-  shouldYieldToExternalNotifier,
   toastHostSpawnOptions,
   toastXml,
 } = await import('../src/ink/terminal-notification-windows.js')
@@ -134,13 +132,6 @@ function harness(options: {
   return { registry, runner, logged, transport: createWindowsToastTransport(transportOptions) }
 }
 
-/** A profile document with (or without) a `dependencies` block. */
-function profileWith(dependencies: Record<string, string> | undefined): string {
-  const path = join(tempDir(), 'package.json')
-  writeFileSync(path, dependencies === undefined ? '{ "name": "dsh-tui" }' : JSON.stringify({ name: 'dsh-tui', dependencies }))
-  return path
-}
-
 let passed = 0
 async function check(name: string, body: () => void | Promise<void>): Promise<void> {
   await body()
@@ -189,17 +180,11 @@ await check('an over-long summary is clipped to the two lines the toast can show
 
 // --- the dedup decision (D8/AC-6) ---------------------------------------------
 
-await check('a profile that depends on an external notifier yields', () => {
-  assert.ok(EXTERNAL_NOTIFIER_PACKAGES.length > 0, 'the list is the single place the names live')
-  for (const name of EXTERNAL_NOTIFIER_PACKAGES) {
-    assert.equal(shouldYieldToExternalNotifier(profileWith({ [name]: '^1.0.0' })), true, `${name} must count as an external notifier`)
-  }
-})
-
-await check('a profile without one does not yield, and an unreadable profile never throws', () => {
-  assert.equal(shouldYieldToExternalNotifier(profileWith({ '@deepseek-harness-tui/dsh-tui': '^0.15.0' })), false)
-  assert.equal(shouldYieldToExternalNotifier(profileWith(undefined)), false, 'no dependencies block means no notifier')
-  assert.equal(shouldYieldToExternalNotifier(join(tempDir(), 'absent', 'package.json')), false, 'an unreadable profile must not silence the notification')
+await check('confirmed external ownership yields before any system work', async () => {
+  const h = harness()
+  assert.deepEqual(await h.transport.notify({ title: TITLE, externalNotifierActive: true }), { status: 'yielded' })
+  assert.deepEqual(h.registry.writes, [])
+  assert.deepEqual(h.runner.calls, [])
 })
 
 // --- the registration state machine (D11/AC-5) ---------------------------------
@@ -411,13 +396,12 @@ await check('the default registry port drives in-box reg.exe against our own key
 
 // --- the assembled contract ----------------------------------------------------
 
-// A dedup hit is asserted end to end instead: the real caller reads the real
-// profile document through the real transport
-// (verify-task-notifications-windows.ts, "delivers nothing at all").
+// The delivery-chain suite also checks enabled/disabled host inventory rows
+// and the DSH/Claude/Codex ownership boundary.
 
 await check('dedup misses still deliver the notification', async () => {
   const h = harness()
-  const result = await h.transport.notify({ title: TITLE, profilePackageJsonPath: profileWith({ 'dsh-ops': '^0.3.0' }) })
+  const result = await h.transport.notify({ title: TITLE, externalNotifierActive: false })
   assert.deepEqual(result, { status: 'shown' })
   assert.equal(h.runner.calls.length, 1)
 })

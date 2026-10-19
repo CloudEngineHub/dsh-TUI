@@ -5,8 +5,8 @@
  * The layers under this one have regressions of their own
  * (`verify-notify-transport` / `verify-task-notifications`); what neither covers
  * is the seam between them: a completion resolves to `windows`, the host hands
- * its title and summary to the transport, the transport reads the profile
- * document the host resolved and spawns the in-box host - and a refusal anywhere
+ * its title, summary and active-inventory decision to the transport, which
+ * spawns the in-box host - and a refusal anywhere
  * in that chain has to end in a bell rather than in silence (AC-5), while a toast
  * that did show must not also ring one.
  *
@@ -25,6 +25,7 @@ import { dirname, join, relative } from 'node:path'
 import { Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { TaskNotificationSettings } from '../src/dsh-adapter/plugin.js'
+import type { PluginManagerView } from '../src/dsh-adapter/plugin-manager.js'
 import type { ExecFileNoThrowOptions, ExecFileNoThrowResult } from '../src/utils/execFileNoThrow.js'
 import type { RegistryPort, RegistryWriteResult, WindowsToastResult } from '../src/ink/terminal-notification-windows.js'
 
@@ -51,7 +52,6 @@ process.on('exit', () => {
 })
 
 const {
-  EXTERNAL_NOTIFIER_PACKAGES,
   createWindowsToastTransport,
 } = await import('../src/ink/terminal-notification-windows.js')
 const { createTerminalNotifier } = await import('../src/ink/terminal-notification.js')
@@ -73,6 +73,11 @@ const REGISTRY_REFUSED = 'ERROR: Access is denied.'
 /** The profile every case below resolves its dedup document through. */
 const PROFILE = 'verify-notify-windows'
 const PROFILE_DOCUMENT = join(dshHome, 'profiles', PROFILE, 'package.json')
+const EXTERNAL_NOTIFIER_PACKAGES = ['@baobaolaodie/cc-dsh-notifier', 'cc-dsh-notifier']
+type PluginRow = Awaited<ReturnType<PluginManagerView['listPlugins']>>[number]
+function notifierRow(moduleName = EXTERNAL_NOTIFIER_PACKAGES[0]): PluginRow {
+  return { entryId: 'notifier' as PluginRow['entryId'], moduleName, enabled: true, fiberPhase: 'active', readOnlyReason: 'unaddressable' }
+}
 process.env.DSH_TUI_PROFILE = PROFILE
 const thisFile = fileURLToPath(import.meta.url)
 const repoRoot = dirname(dirname(thisFile))
@@ -138,8 +143,8 @@ function writeProfile(dependencies: Record<string, string>): void {
 interface Chain {
   registry: ReturnType<typeof recordingRegistry>
   runner: ReturnType<typeof recordingRunner>
-  /** The profile document the host handed the transport, per attempt (F2). */
-  profileDocuments: (string | undefined)[]
+  /** The active-notifier decision read from the running profile, per attempt. */
+  externalNotifierStates: (boolean | undefined)[]
   /** What the toast port answered, per attempt (D8's three answers). */
   toastResults: WindowsToastResult[]
   /** What the terminal path was asked to announce, in order. */
@@ -153,7 +158,7 @@ interface Chain {
 /**
  * One task completion, driven through the same three hops production uses:
  * `deliverTaskCompletionOnWindows` → the transport → the in-box host. Only the
- * ports are stubs; the routing, the dedup read and the XML are the real code.
+ * ports are stubs; the routing, the inventory decision and the XML are the real code.
  * @param message - The summary the completion carries.
  * @param options.platform - What the transport sees; defaults to win32.
  * @param options.registry - A recording registry, or one that refuses a write.
@@ -165,6 +170,8 @@ async function deliverCompletion(
   options: {
     platform?: NodeJS.Platform
     backendId?: string
+    plugins?: PluginRow[]
+    pluginReadFails?: boolean
     registry?: ReturnType<typeof recordingRegistry>
     notifications?: TaskNotificationSettings
   } = {},
@@ -172,7 +179,7 @@ async function deliverCompletion(
   const registry = options.registry ?? recordingRegistry()
   const runner = recordingRunner()
   const delivered: [string, string][] = []
-  const profileDocuments: (string | undefined)[] = []
+  const externalNotifierStates: (boolean | undefined)[] = []
   const toastResults: WindowsToastResult[] = []
   const bell: string[] = []
   const debug: string[] = []
@@ -202,8 +209,12 @@ async function deliverCompletion(
   process.stderr.write = ((chunk: unknown): boolean => { debug.push(String(chunk)); return true }) as typeof process.stderr.write
   try {
     await deliverTaskCompletionOnWindows(TITLE, message, options.backendId ?? 'dsh', {
+      pluginManager: { listPlugins: async () => {
+        if (options.pluginReadFails) throw new Error('inventory unavailable')
+        return options.plugins ?? []
+      } },
       toast: async input => {
-        profileDocuments.push(input.profilePackageJsonPath)
+        externalNotifierStates.push(input.externalNotifierActive)
         const result = await transport.notify(input)
         toastResults.push(result)
         return result
@@ -218,28 +229,7 @@ async function deliverCompletion(
     if (realDebug === undefined) delete process.env.DSH_TUI_DEBUG
     else process.env.DSH_TUI_DEBUG = realDebug
   }
-  return { registry, runner, profileDocuments, toastResults, delivered, bell, debug }
-}
-
-/**
- * Put the two things that can name this launch's profile in place, and put them
- * back afterwards: the argv the launcher inherited, and the variable its entry
- * route hands down (`src/update.ts`).
- * @param route.argv - The argv the process sees for this case.
- * @param route.env - The variable's value, or undefined to leave it unset.
- * @param body - The case itself.
- */
-async function withLaunchRoute<T>(route: { argv: readonly string[], env: string | undefined }, body: () => Promise<T>): Promise<T> {
-  const originalArgv = process.argv
-  try {
-    process.argv = [...route.argv]
-    if (route.env === undefined) delete process.env.DSH_TUI_PROFILE
-    else process.env.DSH_TUI_PROFILE = route.env
-    return await body()
-  } finally {
-    process.argv = originalArgv
-    process.env.DSH_TUI_PROFILE = PROFILE
-  }
+  return { registry, runner, externalNotifierStates, toastResults, delivered, bell, debug }
 }
 
 let passed = 0
@@ -268,9 +258,9 @@ await check('a completion reaches the in-box host as one escaped toast', async (
 
 // --- AC-6: an external notifier owns the completion ----------------------------
 
-await check('a profile that names an external notifier delivers nothing at all', async () => {
+await check('an active external DSH notifier owns the completion', async () => {
   writeProfile({ [EXTERNAL_NOTIFIER_PACKAGES[0]]: '^1.0.0' })
-  const chain = await deliverCompletion(NASTY)
+  const chain = await deliverCompletion(NASTY, { plugins: [notifierRow()] })
   assert.deepEqual(
     chain.toastResults,
     [{ status: 'yielded' }],
@@ -283,11 +273,34 @@ await check('a profile that names an external notifier delivers nothing at all',
   assert.deepEqual(chain.debug, [], 'yielding is not a fallback, so there is nothing to explain')
 })
 
+await check('an installed but inactive notifier never swallows a completion', async () => {
+  writeProfile({ [EXTERNAL_NOTIFIER_PACKAGES[0]]: '^1.0.0' })
+  const row = notifierRow()
+  for (const plugins of [[], [{ ...row, enabled: false }],
+    ...(['pending', 'loading', 'failed', 'unloading', null] as const).map(fiberPhase => [{ ...row, fiberPhase }])]) {
+    const chain = await deliverCompletion(NASTY, { plugins })
+    assert.deepEqual(chain.toastResults, [{ status: 'shown' }], 'installed dependencies are not live ownership')
+    assert.equal(chain.runner.calls.length, 1)
+    assert.deepEqual(chain.bell, [])
+  }
+})
+
+await check('active inventory covers both package names without a profile-file guess', async () => {
+  writeProfile({})
+  for (const moduleName of EXTERNAL_NOTIFIER_PACKAGES) {
+    const chain = await deliverCompletion(NASTY, { plugins: [notifierRow(moduleName)] })
+    assert.deepEqual(chain.toastResults, [{ status: 'yielded' }])
+    assert.deepEqual(chain.runner.calls, [])
+  }
+  const unavailable = await deliverCompletion(NASTY, { pluginReadFails: true })
+  assert.deepEqual(unavailable.toastResults, [{ status: 'shown' }], 'inventory failure must not silently drop the notification')
+})
+
 await check('a DSH notifier dependency does not swallow other backends\' completions', async () => {
   writeProfile({ [EXTERNAL_NOTIFIER_PACKAGES[0]]: '^1.0.0' })
   for (const backendId of ['codex', 'claude']) {
-    const chain = await deliverCompletion(NASTY, { backendId })
-    assert.deepEqual(chain.profileDocuments, [undefined], `${backendId}: DSH plugins do not own this session`)
+    const chain = await deliverCompletion(NASTY, { backendId, plugins: [notifierRow()] })
+    assert.deepEqual(chain.externalNotifierStates, [false], `${backendId}: DSH plugins do not own this session`)
     assert.equal(chain.toastResults[0]?.status, 'shown')
     assert.equal(chain.runner.calls.length, 1, 'the built-in toast still delivers')
     assert.deepEqual(chain.bell, [], 'one delivered notification')
@@ -344,38 +357,10 @@ await check('a terminal that comes back while the toast is in flight still gets 
     const chain = await deliverCompletion(NASTY, { registry, notifications: { condition: 'unfocused', method: 'bel' } })
     const logged = chain.debug.join('')
     assert.deepEqual(chain.bell, ['\x07'], 'AC-5: the reminder the gate approved must not be eaten by a second look at the focus')
-    assert.equal(/ringing the terminal bell/u.test(logged), chain.bell.length > 0, 'the log may only report a bell that actually rang')
+    assert.match(logged, /using the terminal fallback/u, 'the log describes the fallback without overriding a later off setting')
     assert.match(logged, /windows toast unavailable/u, 'and the pair "no toast + bell" stays explainable')
   } finally {
     resetTerminalFocusState()
-  }
-})
-
-// --- F2: which profile document governs this launch ----------------------------
-// The host resolves "which profile document governs this launch" on its own, and
-// either launch route - `--profile` in argv, or the variable the launcher's entry
-// route hands down - may be the one that names it. Both have to reach the
-// transport: a launch whose document is not read stops yielding to an external
-// notifier, and the user gets two notifications for one completion.
-
-await check('the completion resolves the profile document on both launch routes', async () => {
-  const routes = [
-    { label: '--profile in argv', argv: ['node', 'dsh', '--profile', PROFILE], env: undefined },
-    { label: 'DSH_TUI_PROFILE from the launcher', argv: ['node', 'dsh'], env: PROFILE },
-  ] as const
-  for (const route of routes) {
-    await withLaunchRoute(route, async () => {
-      writeProfile({ [EXTERNAL_NOTIFIER_PACKAGES[0]]: '^1.0.0' })
-      const chain = await deliverCompletion(NASTY)
-      assert.deepEqual(chain.profileDocuments, [PROFILE_DOCUMENT], `${route.label}: the toast half resolves the document this launch names`)
-      assert.deepEqual(chain.toastResults, [{ status: 'yielded' }], `${route.label}: the external notifier in that document stands the toast down`)
-      assert.deepEqual(chain.bell, [], `${route.label}: yielding is not a fallback`)
-      // The control the comparison needs: without the notifier the same route
-      // delivers, so "yielded" above is that document's doing.
-      writeProfile({})
-      const wired = await deliverCompletion(NASTY)
-      assert.deepEqual(wired.toastResults, [{ status: 'shown' }], `${route.label}: control - the same launch delivers without that document`)
-    })
   }
 })
 

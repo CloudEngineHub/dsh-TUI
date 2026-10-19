@@ -4,7 +4,7 @@
  *
  * It answers two questions, and a caller should not need anything else:
  *   - show one                                  {@link notifyWindowsToast}
- *   - is an external notifier already doing it? {@link shouldYieldToExternalNotifier}
+ *   - yield when the caller confirms an active external notifier
  *
  * Every system side effect sits behind the win32 guard and behind the injected
  * ports, so a POSIX process that reaches this module anyway neither writes the
@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { logForDebugging } from '../utils/debug.js'
@@ -76,19 +76,6 @@ function shippedToastIcon(): string | undefined {
     .map(relative => fileURLToPath(new URL(relative, import.meta.url)))
     .find(candidate => existsSync(candidate))
 }
-
-/**
- * The packages whose presence in a profile's `dependencies` means another
- * notifier already covers task completions, so this transport stands down
- * (D8/AC-6). This constant is the only place those names live - to support one
- * more external notifier, add its package name here. The match is an exact
- * dependency key, so list the spelling a profile actually pins: real profiles
- * pin the scoped name.
- */
-export const EXTERNAL_NOTIFIER_PACKAGES: readonly string[] = [
-  '@baobaolaodie/cc-dsh-notifier',
-  'cc-dsh-notifier',
-]
 
 /** `reg.exe` answers in milliseconds; a write that takes longer is stuck, not slow. */
 const REGISTRY_TIMEOUT_MS = 15_000
@@ -354,47 +341,21 @@ export interface WindowsToastInput {
   title: string
   /** Single-line summary; empty shows the title alone. */
   message?: string
-  /** `<dshHome>/profiles/<profile>/package.json`, for the dedup read (D8). */
-  profilePackageJsonPath?: string
+  /** The host confirmed an enabled, active DSH notifier in its live inventory. */
+  externalNotifierActive?: boolean
 }
 
 /** The two overrides a caller may need before a notification exists. */
 export interface WindowsToastAvailabilityQuery {
   /** Platform override for a regression; defaults to the transport's platform. */
   platform?: NodeJS.Platform
-  /** The profile document to check for an external notifier (D8). */
-  profilePackageJsonPath?: string
+  /** Active notifier ownership, supplied by the host rather than inferred from installed files. */
+  externalNotifierActive?: boolean
 }
 
 export interface WindowsToastTransport {
   /** Dedup, register, show. Never rejects: the caller treats this as fire-and-forget. */
   notify(input: WindowsToastInput): Promise<WindowsToastResult>
-}
-
-// --- the dedup decision (D8/AC-6) ---------------------------------------------
-
-/**
- * Whether a profile that already runs an external notifier owns task-completion
- * notifications. The caller passes the path, so this module never has to guess
- * where a profile lives.
- *
- * A document that is missing or unreadable answers "no": an unreadable profile
- * is not evidence of another notifier, and guessing "yes" would drop the
- * notification silently.
- * @param profilePackageJsonPath `<dshHome>/profiles/<profile>/package.json`.
- * @returns true when one of {@link EXTERNAL_NOTIFIER_PACKAGES} is a dependency.
- */
-export function shouldYieldToExternalNotifier(profilePackageJsonPath: string): boolean {
-  let document: unknown
-  try {
-    document = JSON.parse(readFileSync(profilePackageJsonPath, 'utf8'))
-  } catch {
-    return false
-  }
-  if (typeof document !== 'object' || document === null) return false
-  const dependencies = (document as { dependencies?: unknown }).dependencies
-  if (typeof dependencies !== 'object' || dependencies === null) return false
-  return EXTERNAL_NOTIFIER_PACKAGES.some(name => Object.hasOwn(dependencies, name))
 }
 
 // --- the transport ------------------------------------------------------------
@@ -435,7 +396,7 @@ export function createWindowsToastTransport(options: WindowsToastTransportOption
 
   function available(query: WindowsToastAvailabilityQuery = {}): WindowsToastAvailability {
     if ((query.platform ?? platform) !== 'win32') return { available: false, reason: 'not-win32' }
-    if (query.profilePackageJsonPath !== undefined && shouldYieldToExternalNotifier(query.profilePackageJsonPath)) {
+    if (query.externalNotifierActive === true) {
       return { available: false, reason: 'yielded' }
     }
     // The same two refusals `register()` makes, in the same order: without an
@@ -490,7 +451,7 @@ export function createWindowsToastTransport(options: WindowsToastTransportOption
   return {
     async notify(input: WindowsToastInput): Promise<WindowsToastResult> {
       try {
-        const judgement = available({ profilePackageJsonPath: input.profilePackageJsonPath })
+        const judgement = available({ externalNotifierActive: input.externalNotifierActive })
         if (!judgement.available) {
           if (judgement.reason === 'yielded') return { status: 'yielded' }
           return unavailable(judgement.reason, judgement.detail)

@@ -31,7 +31,7 @@ import { registerTuiChannel } from '../adapter/channel/host-registry.js'
 import { createChildStderrReporter, installChildStderrGuard } from './childStderr.js'
 import { removeClipboardImageDir } from '../utils/clipboard.js'
 import { appendCrashLog, serializeCrashDetail, unserializableCrashDetail, type CrashDetail } from '../utils/crashDetail.js'
-import { dshHomeDir } from '../utils/credentials.js'
+import { pluginManagerOf, type PluginManagerView } from './plugin-manager.js'
 import { logForDebugging } from '../utils/debug.js'
 import { createTerminalNotifier, type NotificationMethod, type TaskNotifications } from '../ink/terminal-notification.js'
 import type { WindowsToastInput, WindowsToastResult } from '../ink/terminal-notification-windows.js'
@@ -221,6 +221,8 @@ export interface RuntimeApplyOptions {
 
 /** Where a Windows task-completion announcement delivers, and where it falls back to. */
 export interface TaskCompletionDelivery {
+  /** Live inventory from the running profile; installed packages alone do not own events. */
+  pluginManager?: Pick<PluginManagerView, 'listPlugins'>
   /** Hand the completion to the native toast transport (D8 keeps the dedup inside it). */
   toast(input: WindowsToastInput): Promise<WindowsToastResult>
   /** The terminal bell, used when the native transport is unavailable. */
@@ -292,6 +294,7 @@ export function createTaskNotificationSettings(
  * @param message - The single-line summary; empty rings for the title alone.
  */
 export function ringTaskCompletion(notifier: TerminalNotifier, settings: TaskNotificationSettings, title: string, message: string): void {
+  // A later explicit off still cancels sound; merely regaining focus does not.
   notifier.configure(settings.condition === 'unfocused' ? 'always' : settings.condition, 'bel')
   try {
     notifier.notify(title, message)
@@ -321,10 +324,20 @@ export async function deliverTaskCompletionOnWindows(
   backendId: string,
   delivery: TaskCompletionDelivery,
 ): Promise<void> {
+  let externalNotifierActive = false
+  if (backendId === 'dsh' && delivery.pluginManager !== undefined) {
+    try {
+      const plugins = await delivery.pluginManager.listPlugins()
+      externalNotifierActive = plugins.some(plugin => plugin.enabled && plugin.fiberPhase === 'active'
+        && ['@baobaolaodie/cc-dsh-notifier', 'cc-dsh-notifier'].includes(plugin.moduleName))
+    } catch {
+      logForDebugging('external notifier inventory unavailable; using the built-in Windows notification')
+    }
+  }
   const result = await delivery.toast({
     title,
     message,
-    profilePackageJsonPath: backendId === 'dsh' ? taskCompletionProfileDocument() : undefined,
+    externalNotifierActive,
   })
   if (result.status !== 'unavailable') return
   // AC-5 wants the bell, not a silent loss - and the reason is what makes the
@@ -334,7 +347,7 @@ export async function deliverTaskCompletionOnWindows(
   // second look at the focus had eaten.
   const cause = result.detail === undefined ? result.reason : `${result.reason}: ${result.detail}`
   delivery.terminal(title, message)
-  logForDebugging(`windows toast unavailable (${cause}); ringing the terminal bell`)
+  logForDebugging(`windows toast unavailable (${cause}); using the terminal fallback`)
 }
 
 /**
@@ -353,24 +366,6 @@ async function showWindowsToast(input: WindowsToastInput): Promise<WindowsToastR
     logForDebugging(`windows toast transport failed to load (${detail})`)
     return { status: 'unavailable', reason: 'unexpected', detail }
   }
-}
-
-/**
- * `<dshHome>/profiles/<profile>/package.json` — the document the transport
- * reads to decide whether an external notifier already owns task completions
- * (D8).
- *
- * Both launch routes have to be read: `dsh --profile <name>` keeps the name in
- * argv, while the launcher's entry route consumes the flag and hands it down as
- * `DSH_TUI_PROFILE` — the variable the entry itself reads (`src/hostEntryRoute.ts`),
- * and the same two-source read `install/pnpm-profile-add.ts` does. A launch
- * that names no profile leaves the question unasked, which the transport
- * answers "not yielded": guessing there would drop a notification.
- * @returns The path, or undefined when this launch names no profile.
- */
-function taskCompletionProfileDocument(): string | undefined {
-  const profile = resolveDshProfileName() ?? (process.env.DSH_TUI_PROFILE?.trim() || undefined)
-  return profile === undefined ? undefined : join(dshHomeDir(), 'profiles', profile, 'package.json')
 }
 
 export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx, runtimeOptions: RuntimeApplyOptions = {}): Promise<void> {
@@ -405,6 +400,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       return
     }
     void deliverTaskCompletionOnWindows(title, message, backendId, {
+      pluginManager: pluginManagerOf(ctx),
       toast: showWindowsToast,
       terminal: (fallbackTitle, fallbackMessage) => ringTaskCompletion(taskNotifier, notificationSettings, fallbackTitle, fallbackMessage),
     })
