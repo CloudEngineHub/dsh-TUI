@@ -26,13 +26,16 @@
  * - a failed or mismatched probe retries, and a reply after HEAD disappears
  *   stays discarded, including a B-C-B checkout between polls;
  * - deep cwd paths, git init, and gitdir retargeting stay observable;
- * - slow async reads do not pile up or escape a released owner or changed cwd.
+ * - slow async reads do not pile up or escape a released owner or changed cwd;
+ * - symlink cwd paths and a returning optional shell still refresh;
+ * - oversized or non-regular Git control files are rejected without blocking.
  *
  * Reads the compiled output, so `pnpm compile` must have produced `lib/types/`:
  *   node scripts/verify-git-branch-refresh.mjs
  */
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { closeSync, constants, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -96,26 +99,48 @@ function makeSubmodule() {
 
 /** Hold one real file's async results; every other filesystem read stays real. */
 function holdHeadReads(headPath) {
-  const original = fs.readFile
+  const originalReadFile = fs.readFile
+  const originalOpen = fs.open
+  const paths = new Set([headPath, realpathSync(headPath)])
   let reads = 0
   let completed = 0
   let release
   const gate = new Promise(resolve => { release = resolve })
-  fs.readFile = async (...args) => {
-    const result = await original(...args)
-    if (args[0] === headPath) {
-      reads += 1
-      await gate
-      completed += 1
-    }
+  const hold = async (result, countCompleted = true) => {
+    reads += 1
+    await gate
+    if (countCompleted) completed += 1
     return result
+  }
+  fs.readFile = async (...args) => {
+    const result = await originalReadFile(...args)
+    return paths.has(args[0]) ? hold(result) : result
+  }
+  fs.open = async (...args) => {
+    const file = await originalOpen(...args)
+    if (paths.has(args[0])) {
+      const read = file.read.bind(file)
+      const close = file.close.bind(file)
+      let first = true
+      file.read = async (...readArgs) => {
+        const result = await read(...readArgs)
+        if (!first) return result
+        first = false
+        return hold(result, false)
+      }
+      file.close = async (...closeArgs) => {
+        try { return await close(...closeArgs) }
+        finally { if (!first) completed += 1 }
+      }
+    }
+    return file
   }
   syncBuiltinESMExports()
   return {
     reads: () => reads,
     completed: () => completed,
     release,
-    restore() { release(); fs.readFile = original; syncBuiltinESMExports() },
+    restore() { release(); fs.readFile = originalReadFile; fs.open = originalOpen; syncBuiltinESMExports() },
   }
 }
 
@@ -129,6 +154,8 @@ function openChannel(cwd, branch) {
   /** Once held, each later probe parks until the test opens its gate. */
   let held = false
   let parkedReplies = 0
+  let shellAvailable = true
+  let missingShellLookups = 0
   const probes = []
   const gates = []
   const failures = []
@@ -157,7 +184,12 @@ function openChannel(cwd, branch) {
       }
     },
   }
-  const ctx = { on: () => () => {}, get: name => name === 'shell' ? shell : undefined, logger: { warn() {} } }
+  const ctx = { on: () => () => {}, get(name) {
+    if (name !== 'shell') return undefined
+    if (shellAvailable) return shell
+    missingShellLookups += 1
+    return undefined
+  }, logger: { warn() {} } }
   const agent = {
     id: 'git-branch-agent', status: 'idle', session: { id: 'git-branch-session', seq: 0, events: [] },
     ctx: { on: () => () => {} }, followup: () => {},
@@ -168,6 +200,8 @@ function openChannel(cwd, branch) {
     /** What the next probe answers; '' is a detached HEAD (no branch name). */
     answer(text) { stdout = text },
     failNext(kind) { failures.push(kind) },
+    setShellAvailable(value) { shellAvailable = value },
+    missingShellLookups: () => missingShellLookups,
     /** Park every later probe; `gates` then holds their open callbacks. */
     hold() { held = true },
     gates,
@@ -456,10 +490,80 @@ try {
         'a read started at the old cwd must not issue a shell query after the switch')
     } finally { held.restore() }
   })
+
+  const physicalRepo = makeRepo()
+  const physicalCwd = join(physicalRepo, 'nested', 'project')
+  mkdirSync(physicalCwd, { recursive: true })
+  const linkedCwd = join(tempDir('dsh-tui-cwd-link-'), 'project')
+  symlinkSync(physicalCwd, linkedCwd, process.platform === 'win32' ? 'junction' : 'dir')
+  await scenario('a symlink cwd finds the repository above its physical target', { cwd: linkedCwd, branch: 'main' }, async ({ channel, answer, probes }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    writeFileSync(join(physicalRepo, '.git', 'HEAD'), HEAD_REF('physical-branch'))
+    answer('physical-branch')
+    assert.ok(await settled(() => channel.gitBranch === 'physical-branch', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'repository discovery must follow the target ancestors of a symlink cwd')
+    assert.ok(probes.every(probe => probe.workdir === linkedCwd), 'the host shell keeps the requested workdir')
+  })
+
+  const missingShellRepo = makeRepo()
+  await scenario('a temporarily absent shell retries the unchanged HEAD after remount', { cwd: missingShellRepo, branch: 'main' }, async ({ channel, answer, setShellAvailable, missingShellLookups }) => {
+    assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+    setShellAvailable(false)
+    answer('remounted')
+    writeFileSync(join(missingShellRepo, '.git', 'HEAD'), HEAD_REF('remounted'))
+    assert.ok(await settled(() => missingShellLookups() > 0, { timeoutMs: DETECT_TIMEOUT_MS }),
+      'the changed HEAD must encounter the missing service before it returns')
+    assert.equal(channel.gitBranch, 'main', 'a missing optional service must retain the previous branch')
+    setShellAvailable(true)
+    assert.ok(await settled(() => channel.gitBranch === 'remounted', { timeoutMs: DETECT_TIMEOUT_MS }),
+      'a service remount must recover without another checkout')
+  })
+
+  for (const metadata of ['HEAD', 'gitdir']) {
+    const worktree = makeLinkedWorktree()
+    await scenario(`an oversized ${metadata} file is not followed`, { cwd: worktree.cwd, branch: 'main' }, async ({ channel, answer, probes }) => {
+      assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+      answer('over-budget')
+      writeFileSync(join(worktree.gitdir, 'HEAD'), HEAD_REF('over-budget'))
+      const path = metadata === 'HEAD' ? join(worktree.gitdir, 'HEAD') : join(worktree.cwd, '.git')
+      const prefix = metadata === 'HEAD' ? HEAD_REF('over-budget') : `gitdir: ${worktree.gitdir.replaceAll('\\', '/')}\n`
+      writeFileSync(path, prefix + ' '.repeat(128 * 1024))
+      assert.ok(await settled(() => channel.gitBranch === undefined, { timeoutMs: DETECT_TIMEOUT_MS }),
+        'an over-budget control file must become unreadable without publishing its parsed branch')
+      assert.equal(probes.length, 1, 'oversized metadata must not trigger a shell query')
+    })
+  }
+
+  if (process.platform === 'win32') {
+    console.log('SKIP a FIFO HEAD does not park the periodic sampler: POSIX FIFO fixture')
+  } else {
+    const fifoRepo = makeRepo()
+    await scenario('a FIFO HEAD does not park the periodic sampler', { cwd: fifoRepo, branch: 'main' }, async ({ channel }) => {
+      assert.ok(await settled(() => channel.gitBranch === 'main', { timeoutMs: DETECT_TIMEOUT_MS }))
+      const headPath = join(fifoRepo, '.git', 'HEAD')
+      rmSync(headPath)
+      execFileSync('mkfifo', [headPath])
+      try {
+        assert.ok(await settled(() => channel.gitBranch === undefined, { timeoutMs: DETECT_TIMEOUT_MS }),
+          'a non-regular HEAD must be rejected before a blocking read')
+      } finally {
+        // Release an old implementation's blocked reader during the red run.
+        // No reader is pending after the bounded implementation rejects it.
+        let writer
+        try {
+          writer = openSync(headPath, constants.O_WRONLY | constants.O_NONBLOCK)
+          writeSync(writer, HEAD_REF('main'))
+        } catch (error) {
+          if (error.code !== 'ENXIO') throw error
+        } finally { if (writer !== undefined) closeSync(writer) }
+      }
+    })
+  }
 } finally {
   for (const dir of scratch) rmSync(dir, { recursive: true, force: true })
 }
 
+assert.equal(unhandled.length, 0, 'async refresh work must handle its rejections')
 const failed = results.filter(result => result.failure !== undefined)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) {

@@ -6,10 +6,11 @@
  * changes, and the git-branch breadcrumb. Each lookup degrades when its row
  * is not mounted, whatever backend serves the session.
  */
-import { readFile, stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { AdapterRuntimeOptions } from '../../../adapter/kernel/runtime.js'
 import { readGrantStore } from '../../../adapter/standard/grants.js'
+import { readBoundedRegularFile } from '../../../utils/pastedImagePath.js'
 import { getHostCommandTrees, type TuiCommandTreeRuntime } from '../../command-trees.js'
 import { runForegroundShell, type ForegroundShell } from '../../compat/shell.js'
 import { getHostGrantStore } from '../../host-grants.js'
@@ -145,6 +146,8 @@ export function startHostSubscriptions(
 
 /** How often the workspace HEAD is read for a signature change. */
 const BRANCH_HEAD_POLL_MS = 1000
+/** Ample room for long UTF-8 refs/gitdir paths without unbounded control-file reads. */
+const GIT_METADATA_MAX_BYTES = 128 * 1024
 
 /**
  * The `HEAD` file of the repository containing `cwd` (a linked worktree or a
@@ -155,7 +158,7 @@ const BRANCH_HEAD_POLL_MS = 1000
  */
 async function gitHeadPath(cwd: string): Promise<string | undefined> {
   try {
-    let dir = cwd
+    let dir = await realpath(cwd)
     for (;;) {
       const dotGit = join(dir, '.git')
       const entry = await stat(dotGit).catch((error: NodeJS.ErrnoException) => {
@@ -164,7 +167,7 @@ async function gitHeadPath(cwd: string): Promise<string | undefined> {
       })
       if (entry?.isDirectory()) return join(dotGit, 'HEAD')
       if (entry?.isFile()) {
-        const target = /^gitdir:\s*(.+)$/m.exec(await readFile(dotGit, 'utf8'))?.[1]
+        const target = /^gitdir:\s*(.+)$/m.exec(await readGitMetadata(dotGit) ?? '')?.[1]
         // Git records the target relative to the directory holding `.git`.
         if (target === undefined) return undefined
         return join(resolve(dirname(dotGit), target.trim()), 'HEAD')
@@ -179,11 +182,11 @@ async function gitHeadPath(cwd: string): Promise<string | undefined> {
   }
 }
 
-/** The HEAD text a probe is anchored on; undefined when there is nothing to read. */
-async function readHeadSignature(headPath: string | undefined): Promise<string | undefined> {
-  if (headPath === undefined) return undefined
+/** Small, regular Git control files only; unreadable metadata stays best-effort. */
+async function readGitMetadata(path: string | undefined): Promise<string | undefined> {
+  if (path === undefined) return undefined
   try {
-    return (await readFile(headPath, 'utf8')).trim()
+    return Buffer.from(await readBoundedRegularFile(path, GIT_METADATA_MAX_BYTES)).toString('utf8')
   } catch {
     return undefined
   }
@@ -237,7 +240,7 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     const readTicket = issued
     // Resolve on every sample: git init and a retargeted .git file can change
     // the repository without changing cwd. Async reads leave the UI runnable.
-    const observed = await readHeadSignature(await gitHeadPath(requestedCwd))
+    const observed = (await readGitMetadata(await gitHeadPath(requestedCwd)))?.trim()
     if (readTicket !== issued || !deps.owner.current() || state.cwd !== requestedCwd) return
     if (!clearFirst) {
       if (observed === undefined) {
@@ -259,7 +262,10 @@ export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
     signature = observed
     retryProbe = false
     const shell = ctx.get('shell') as ForegroundShell | undefined
-    if (!shell) return
+    if (!shell) {
+      retryProbe = true
+      return
+    }
     // Capture the requested cwd: a /resume landing while this query is in
     // flight refreshes the branch for the new cwd, so a late reply from the
     // old workspace must be dropped (stale statusline, issue #96).

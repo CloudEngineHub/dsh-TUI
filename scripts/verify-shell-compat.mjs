@@ -112,8 +112,9 @@ try {
   } }
   const stale = channelFor(delayed)
   stale.channel.submit('!!late')
-  assert.ok(await settled(() => started.includes('late')), 'the submitted command must start before release')
-  assert.deepEqual(started, ['git branch --show-current', 'late'])
+  assert.ok(await settled(() => started.includes('late') && started.includes('git branch --show-current')),
+    'both the submitted command and async branch probe must start before release')
+  assert.deepEqual([...started].sort(), ['git branch --show-current', 'late'])
   stale.channel.releaseContributions()
   const rowCount = stale.channel.rows.length
   resolve(output('late output'))
