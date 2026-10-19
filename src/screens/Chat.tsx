@@ -10,7 +10,7 @@ import { envThemeOverride } from '../components/design-system/ThemeProvider.js'
 import { resolveBrand, setActiveBrand } from '../branding.js'
 import { hasPath } from '../dsh-adapter/settingsEditor.js'
 import { planReload, type ReloadKind } from '../reload.js'
-import { AlternateScreen, Box, Image, Text, InputCaret, useInput, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
+import { AlternateScreen, Box, Image, Text, InputCaret, useInput, useApp, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
 import * as tuiKit from '../ui.js'
 import { usePageInset } from '../components/PageMargin.js'
 import { POINTER } from '../terminal-utils/figures.js'
@@ -2342,9 +2342,9 @@ export function Chat({
   // `✦` otherwise. dsh-TUI brands the idle prefix with the DeepSeek whale.
   const [titleFrame, setTitleFrame] = React.useState(0)
   const terminalFocused = useTerminalFocus()
-  // Resolved once: the TTY check and the opt-out env var do not change while
-  // the TUI is mounted.
-  const programStatusEnabled = React.useMemo(() => supportsProgramStatus(), [])
+  // Gate the stream this app renders to; embedders may replace process.stdout.
+  const { stdout: appStdout } = useApp()
+  const programStatusEnabled = React.useMemo(() => supportsProgramStatus(appStdout.isTTY === true), [appStdout])
   // Mouse text selection auto-copy: active only in
   // fullscreen (<AlternateScreen> supplies mouse tracking); a no-op
   // subscription in inline mode, where selection belongs to the terminal.

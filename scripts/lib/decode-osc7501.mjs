@@ -54,12 +54,12 @@ export function hasControlChar(text) {
 }
 
 /**
- * 把不可信文本转成「只含可见字符」的一行：控制字符写成 `\e`/`\n`/`\xNN`，
+ * 把不可信文本转成「只含可见字符」的一行：控制字符写成 `\e`/`\n`/`\xNN`，格式符写成 `\u{…}`，
  * 其余原样。这是本模块唯一的输出通道，任何来自报告的字段都必须先过这里。
  */
 export function escapeForDisplay(text) {
   let out = ''
-  for (const char of text) {
+  for (const char of text.replace(/\p{Cf}/gu, char => `\\u{${char.codePointAt(0).toString(16)}}`)) {
     const code = char.codePointAt(0) ?? 0
     if ((code >= 0x20 && code < 0x7f) || code > 0x9f) {
       out += char

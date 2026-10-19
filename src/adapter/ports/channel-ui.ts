@@ -192,10 +192,10 @@ export interface ChannelUi {
    *  {@link turnUsage}: that ledger is only emitted by a turn that reported
    *  usage, so a usage-less failed or cancelled turn would otherwise leave
    *  the PREVIOUS turn's outcome standing (or, on the first turn, nothing at
-   *  all). Undefined before any turn ended. */
+   *  all). Cleared when the next turn starts. */
   readonly turnOutcome: TurnOutcome | undefined
-  /** Live starts since the current binding; excludes replay and survives render batching. */
-  readonly liveTurnStarts: number
+  /** Live ends since the current binding; excludes replay and survives render batching. */
+  readonly liveTurnEnds: number
   /**
    * Context occupancy — the ONE source of truth for the footer's `ctx` field,
    * the segmented context bar, the working-activity line's `⚠ ctx N%` prefix,

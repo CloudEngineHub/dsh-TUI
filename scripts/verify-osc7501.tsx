@@ -265,7 +265,7 @@ console.log('hook end to end')
 type StatusChannel = {
   working: boolean
   turnOutcome: 'completed' | 'interrupted' | 'error' | undefined
-  liveTurnStarts: number
+  liveTurnEnds: number
   agentBindingGeneration: number
   sessionTitle: string
   sessionId: string
@@ -282,7 +282,7 @@ const statusInput = (
   blocked: StatusInput['blocked'] = null,
   enabled = true,
 ): StatusInput => ({
-  channel: { working: false, turnOutcome: undefined, liveTurnStarts: 0, agentBindingGeneration: 0, sessionTitle: 'sess', sessionId: 's1', ...over },
+  channel: { working: false, turnOutcome: undefined, liveTurnEnds: 0, agentBindingGeneration: 0, sessionTitle: 'sess', sessionId: 's1', ...over },
   blocked,
   enabled,
 })
@@ -438,10 +438,10 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
 // switching sessions without remounting must not replay the new session's
 // history as a fresh done
 {
-  const { instance, set, reports } = mountHook(statusInput({ liveTurnStarts: 1, turnOutcome: 'completed' }))
+  const { instance, set, reports } = mountHook(statusInput({ liveTurnEnds: 1, turnOutcome: 'completed' }))
   await flush()
   assert.match(reports().at(-1)!, /^state=done:/, 'a live startup turn may finish before the first render')
-  set(statusInput({ sessionId: 's2', agentBindingGeneration: 1, liveTurnStarts: 1, turnOutcome: 'error' }))
+  set(statusInput({ sessionId: 's2', agentBindingGeneration: 1, liveTurnEnds: 1, turnOutcome: 'error' }))
   await flush()
   assert.match(reports().at(-1)!, /^state=error:/, 'a newly bound session may finish before its first render')
   set(statusInput({ sessionId: 's2', agentBindingGeneration: 2, turnOutcome: 'error' }))
@@ -506,7 +506,7 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
   ]
 
   /** A mount whose channel IS a real projector state. */
-  const mountProjection = () => {
+  const mountProjection = (history: readonly AgentEvent[] = [], initialLive: readonly AgentEvent[] = []) => {
     const rig = createProjectorHarness()
     rig.apply([{ type: 'session.title', title: 'sess', source: 'auto' }] as readonly AgentEvent[])
     const router = createSessionBatchRouter({
@@ -515,7 +515,9 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
       inputConvergence: { cancelInFlight: false, interruptSeq: 0 },
       warn: () => undefined,
     })
-    const channel = Object.assign(rig.state, { liveTurnStarts: 0, agentBindingGeneration: 0 })
+    router.route(history, { replay: true }, () => true)
+    router.route(initialLive, { replay: false }, () => true)
+    const channel = Object.assign(rig.state, { liveTurnEnds: router.turnEnds(), agentBindingGeneration: 0 })
     const { instance, set, reports } = mountHook({ channel, blocked: null, enabled: true })
     return {
       rig,
@@ -523,7 +525,7 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
       /** Fold events, then re-render: what a channel emit does in the app. */
       fold: async (events: readonly AgentEvent[], replay = false): Promise<void> => {
         router.route(events, { replay }, () => true)
-        channel.liveTurnStarts = router.turnStarts()
+        channel.liveTurnEnds = router.turnEnds()
         set({ channel, blocked: null, enabled: true })
         await flush()
       },
@@ -542,6 +544,32 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
     batched.unmount()
   }
   console.log('  ok - a live start/end batch reports its outcome without an intermediate working frame')
+
+  for (const reason of [{ kind: 'error', message: 'resumed failure' }, { kind: 'completed' }] as const) {
+    const resumed = mountProjection(user('resume-u1', 1, 1), [
+      { type: 'turn.end', turn: 1, reason, time: 1002 },
+    ])
+    await flush()
+    check(`a replayed start followed by a live ${reason.kind} before mount reports the live outcome`, () => {
+      assert.equal(resumed.reports().at(-1), `state=${reason.kind === 'error' ? 'error' : 'done'}:app=dsh-tui:title=c2Vzcw==`)
+    })
+    resumed.unmount()
+  }
+
+  for (const status of ['idle', 'disposed'] as const) {
+    const recovered = mountProjection()
+    await recovered.fold([
+      ...user('settled-u1', 1, 1),
+      { type: 'turn.end', turn: 1, reason: { kind: 'completed' }, time: 1002 },
+    ])
+    await recovered.fold(user('retired-u2', 2, 2))
+    await recovered.fold([{ type: 'session.status', status }])
+    check(`status ${status} without turn.end cannot inherit the previous completion`, () => {
+      assert.equal(recovered.rig.state.turnOutcome, undefined)
+      assert.equal(recovered.reports().at(-1), 'state=idle:app=dsh-tui:title=c2Vzcw==')
+    })
+    recovered.unmount()
+  }
 
   const replayed = mountProjection()
   await flush()

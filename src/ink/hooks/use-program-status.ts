@@ -37,8 +37,8 @@ export type ProgramStatusChannel = {
    * successful turn, report the previous `completed` as a fresh `done`.
    */
   turnOutcome: 'completed' | 'interrupted' | 'error' | undefined
-  /** Live starts from the channel router, even if an entire turn fits in one render batch. */
-  liveTurnStarts: number
+  /** Live ends from the channel router, including turns that started in replay. */
+  liveTurnEnds: number
   /** Changes on a rebind even when the backend keeps the same session id. */
   agentBindingGeneration: number
   /** Short session label used as the record title. */
@@ -104,7 +104,7 @@ export function useProgramStatus(input: ProgramStatusInput): void {
   })
 
   const { channel, blocked, enabled } = input
-  const { working, turnOutcome, liveTurnStarts, agentBindingGeneration, sessionTitle, sessionId } = channel
+  const { working, turnOutcome, liveTurnEnds, agentBindingGeneration, sessionTitle, sessionId } = channel
 
   useEffect(() => {
     if (!enabled || !writeRaw) return
@@ -114,9 +114,9 @@ export function useProgramStatus(input: ProgramStatusInput): void {
     if (latchRef.current.sessionId !== sessionId || latchRef.current.generation !== agentBindingGeneration) {
       latchRef.current = { sessionId, generation: agentBindingGeneration, sawWorking: false }
     }
-    // A synchronous start/end batch may never render `working=true`; the
-    // router's live count still distinguishes it from historical turn.end.
-    if (working || liveTurnStarts > 0) latchRef.current.sawWorking = true
+    // A synchronous start/end batch or a resumed running turn may finish
+    // before `working=true` renders; live ends still differ from history.
+    if (working || liveTurnEnds > 0) latchRef.current.sawWorking = true
 
     const derive = (): { state: ProgramState; kind?: ProgramBlockedKind; msg?: string } => {
       if (blocked !== null) return { state: 'blocked', kind: blocked.kind, msg: blocked.message }
@@ -148,5 +148,5 @@ export function useProgramStatus(input: ProgramStatusInput): void {
     if (sequence === '' || sequence === lastSequenceRef.current) return
     lastSequenceRef.current = sequence
     writeRaw(sequence)
-  }, [enabled, working, turnOutcome, liveTurnStarts, agentBindingGeneration, blocked, sessionTitle, writeRaw, sessionId])
+  }, [enabled, working, turnOutcome, liveTurnEnds, agentBindingGeneration, blocked, sessionTitle, writeRaw, sessionId])
 }

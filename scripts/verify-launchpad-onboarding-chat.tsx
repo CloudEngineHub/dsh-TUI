@@ -290,6 +290,7 @@ function makeChannel(over: Record<string, unknown> = {}) {
 }
 
 interface Flags {
+  stdoutIsTTY?: boolean
   launchpadOnBoot?: boolean
   onboardingOnBoot?: boolean
   openHomeOnBoot?: boolean
@@ -300,6 +301,7 @@ async function mountChat(flags: Flags, over: Record<string, unknown> = {}, chatP
   const columns = flags.columns ?? COLS
   const term = new XTerm({ cols: columns, rows: ROWS, scrollback: 0, allowProposedApi: true })
   const stdout = new FakeStdout(term)
+  stdout.isTTY = flags.stdoutIsTTY ?? true
   const stdin = new FakeStdin()
   const { channel, notifications, calls } = makeChannel(over)
   const node = (
@@ -405,6 +407,29 @@ const heroLines = (screen: string): string[] =>
 const heroIdentical = (before: readonly string[], after: readonly string[]): boolean =>
   before.length > 0 && after.length === before.length
   && before.every((l, i) => l === after[i])
+
+// OSC status belongs to this rendered app's stream, which an embedder may
+// supply independently of process.stdout.
+{
+  const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const savedStatusFlag = process.env.DSH_TUI_PROGRAM_STATUS
+  process.env.DSH_TUI_PROGRAM_STATUS = '1'
+  try {
+    for (const stdoutIsTTY of [true, false]) {
+      Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: !stdoutIsTTY })
+      const chat = await mountChat({ launchpadOnBoot: true, stdoutIsTTY })
+      await settled(() => chat.screen().includes('说点什么'))
+      check(`OSC 7501 follows app stdout TTY=${stdoutIsTTY} despite the opposite process stdout`,
+        chat.stdout.frames.join('').includes('\x1b]7501;') === stdoutIsTTY)
+      await chat.unmount()
+    }
+  } finally {
+    if (ttyDescriptor === undefined) Reflect.deleteProperty(process.stdout, 'isTTY')
+    else Object.defineProperty(process.stdout, 'isTTY', ttyDescriptor)
+    if (savedStatusFlag === undefined) delete process.env.DSH_TUI_PROGRAM_STATUS
+    else process.env.DSH_TUI_PROGRAM_STATUS = savedStatusFlag
+  }
+}
 
 // ── A. /setup 打开向导 ─────────────────────────────────────────────────────
 {

@@ -1286,6 +1286,7 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
         deps.inputConvergence.cancelInFlight = false
         state.cancelPending = false
         state.working = true
+        state.turnOutcome = undefined
         state.turnStart = Date.now()
         state.responseChars = 0
         state.spinnerMode = 'requesting'

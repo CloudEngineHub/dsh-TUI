@@ -169,6 +169,15 @@ check('转义表覆盖 C0/DEL/C1 的每一个码位', () => {
   assert.equal(escapeForDisplay('世界'), '世界')
 })
 
+check('Unicode 格式控制符转成可见证据，不改变展示方向或隐藏文本', () => {
+  const format = '\u202e\u2066\u200b\u{e0001}'
+  assert.equal(escapeForDisplay(format), '\\u{202e}\\u{2066}\\u{200b}\\u{e0001}')
+  const { entries } = scanChunk(SEQ(`state=done:app=${format}:title=${B64(format)}`))
+  assert.equal(entries[0].ok, true)
+  assert.ok(!/\p{Cf}/u.test(entries[0].line))
+  assert.match(entries[0].line, /title="\\u\{202e\}\\u\{2066\}\\u\{200b\}\\u\{e0001\}"/)
+})
+
 check('恶意语料的每一条输出都不含可执行控制字节', () => {
   const corpus = [
     SEQ(`state=error:app=dsh-tui:msg=${B64('\x1b[2J')}`),
