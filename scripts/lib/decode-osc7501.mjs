@@ -150,7 +150,13 @@ export function scanChunk(text) {
 /** 只保留可能长成报告的那条尾巴（最后一段未终止的 `ESC ] 7501 ;`）。 */
 function retainPending(rest) {
   const start = rest.lastIndexOf(REPORT_PREFIX)
-  if (start < 0) return ''
+  if (start < 0) {
+    // 读取也可能断在 introducer 内；只留下能接成报告前缀的尾巴。
+    for (let length = REPORT_PREFIX.length - 1; length > 0; length--) {
+      if (rest.endsWith(REPORT_PREFIX.slice(0, length))) return rest.slice(-length)
+    }
+    return ''
+  }
   const pending = rest.slice(start)
   // 超过整条序列上限的内容永远不可能成为合法报告；留着只会让一份恶意日志
   // 把内存撑大（也永远不会被消费）。

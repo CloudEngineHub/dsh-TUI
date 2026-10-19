@@ -35,6 +35,8 @@ import {
 } from '../src/ink/termio/osc7501.js'
 import instances from '../src/ink/instances.js'
 import { createProjectorHarness } from './lib/projector-harness.ts'
+import { createSessionBatchRouter } from '../src/dsh-adapter/channel/core/binding-feed.js'
+import type { ChannelState } from '../src/dsh-adapter/channel/types.js'
 import type { AgentEvent } from '../src/agent/events.js'
 
 let failed = 0
@@ -263,6 +265,8 @@ console.log('hook end to end')
 type StatusChannel = {
   working: boolean
   turnOutcome: 'completed' | 'interrupted' | 'error' | undefined
+  liveTurnStarts: number
+  agentBindingGeneration: number
   sessionTitle: string
   sessionId: string
 }
@@ -278,7 +282,7 @@ const statusInput = (
   blocked: StatusInput['blocked'] = null,
   enabled = true,
 ): StatusInput => ({
-  channel: { working: false, turnOutcome: undefined, sessionTitle: 'sess', sessionId: 's1', ...over },
+  channel: { working: false, turnOutcome: undefined, liveTurnStarts: 0, agentBindingGeneration: 0, sessionTitle: 'sess', sessionId: 's1', ...over },
   blocked,
   enabled,
 })
@@ -434,6 +438,19 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
 // switching sessions without remounting must not replay the new session's
 // history as a fresh done
 {
+  const { instance, set, reports } = mountHook(statusInput({ liveTurnStarts: 1, turnOutcome: 'completed' }))
+  await flush()
+  assert.match(reports().at(-1)!, /^state=done:/, 'a live startup turn may finish before the first render')
+  set(statusInput({ sessionId: 's2', agentBindingGeneration: 1, liveTurnStarts: 1, turnOutcome: 'error' }))
+  await flush()
+  assert.match(reports().at(-1)!, /^state=error:/, 'a newly bound session may finish before its first render')
+  set(statusInput({ sessionId: 's2', agentBindingGeneration: 2, turnOutcome: 'error' }))
+  await flush()
+  assert.match(reports().at(-1)!, /^state=idle:/, 'same-id rebind must not inherit a previous live latch')
+  instance.unmount()
+}
+
+{
   const { instance, set, reports } = mountHook(statusInput())
   await flush()
 
@@ -492,19 +509,48 @@ const flush = async (): Promise<void> => { await new Promise<void>(resolve => se
   const mountProjection = () => {
     const rig = createProjectorHarness()
     rig.apply([{ type: 'session.title', title: 'sess', source: 'auto' }] as readonly AgentEvent[])
-    const { instance, set, reports } = mountHook({ channel: rig.state, blocked: null, enabled: true })
+    const router = createSessionBatchRouter({
+      state: rig.state as ChannelState,
+      projector: rig.projector,
+      inputConvergence: { cancelInFlight: false, interruptSeq: 0 },
+      warn: () => undefined,
+    })
+    const channel = Object.assign(rig.state, { liveTurnStarts: 0, agentBindingGeneration: 0 })
+    const { instance, set, reports } = mountHook({ channel, blocked: null, enabled: true })
     return {
       rig,
       reports,
       /** Fold events, then re-render: what a channel emit does in the app. */
-      fold: async (events: readonly AgentEvent[]): Promise<void> => {
-        rig.apply(events)
-        set({ channel: rig.state, blocked: null, enabled: true })
+      fold: async (events: readonly AgentEvent[], replay = false): Promise<void> => {
+        router.route(events, { replay }, () => true)
+        channel.liveTurnStarts = router.turnStarts()
+        set({ channel, blocked: null, enabled: true })
         await flush()
       },
       unmount: () => instance.unmount(),
     }
   }
+
+  for (const reason of [{ kind: 'error', message: 'immediate failure' }, { kind: 'completed' }] as const) {
+    const batched = mountProjection()
+    await flush()
+    await batched.fold([
+      ...user('batch-u1', 1, 1),
+      { type: 'turn.end', turn: 1, reason, time: 1002 },
+    ])
+    assert.equal(batched.reports().at(-1), `state=${reason.kind === 'error' ? 'error' : 'done'}:app=dsh-tui:title=c2Vzcw==`)
+    batched.unmount()
+  }
+  console.log('  ok - a live start/end batch reports its outcome without an intermediate working frame')
+
+  const replayed = mountProjection()
+  await flush()
+  await replayed.fold([
+    ...user('history-u1', 1, 1),
+    { type: 'turn.end', turn: 1, reason: { kind: 'error', message: 'old failure' }, time: 1002 },
+  ], true)
+  assert.equal(replayed.reports().at(-1), 'state=idle:app=dsh-tui:title=c2Vzcw==', 'history must not arm the live-turn latch')
+  replayed.unmount()
 
   // First turn fails before producing any usage: nothing to inherit, and the
   // failure still has to reach the terminal.

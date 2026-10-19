@@ -375,10 +375,16 @@ export function createBindingFeed(ctx: { readonly logger: ChannelHostLogger }, d
     },
   })
 
+  let startsBeforeBind = 0
   return {
     projector,
     router,
-    bind: binder.bind,
+    liveTurnStarts: (): number => router.turnStarts() - startsBeforeBind,
+    bind(seed?: readonly AgentEvent[]): void {
+      // Capture before subscribe can synchronously deliver an entire live turn.
+      startsBeforeBind = router.turnStarts()
+      binder.bind(seed)
+    },
     resetProjection,
     /** Install the backend's job-registry feed and pricing policy (before start). */
     configureProjection(update: Partial<Pick<ChannelProjectionDeps, 'jobs' | 'pricingWindow'>>): void {

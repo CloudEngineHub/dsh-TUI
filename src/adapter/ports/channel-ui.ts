@@ -194,6 +194,8 @@ export interface ChannelUi {
    *  the PREVIOUS turn's outcome standing (or, on the first turn, nothing at
    *  all). Undefined before any turn ended. */
   readonly turnOutcome: TurnOutcome | undefined
+  /** Live starts since the current binding; excludes replay and survives render batching. */
+  readonly liveTurnStarts: number
   /**
    * Context occupancy — the ONE source of truth for the footer's `ctx` field,
    * the segmented context bar, the working-activity line's `⚠ ctx N%` prefix,

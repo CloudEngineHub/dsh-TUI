@@ -198,6 +198,7 @@ export const CHANNEL_UI_PROPERTIES = [
   'lastUsage',
   'turnUsage',
   'turnOutcome',
+  'liveTurnStarts',
   'contextOccupancy',
   'contextBreakdown',
   'team',

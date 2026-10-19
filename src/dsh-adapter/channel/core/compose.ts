@@ -497,6 +497,7 @@ export function createCoreChannel(
       const ref = binding.session.ref
       return { backendId: ref.backendId, sessionId: ref.sessionId }
     },
+    get liveTurnStarts() { return feed.liveTurnStarts() },
     costReport: undefined,
     rateLimit: undefined,
     get olderHistory(): boolean {

@@ -23,8 +23,8 @@ export type ProgramBlockedPrompt = {
 /**
  * The channel facts this hook reports on, taken as ONE object so that the
  * hook — not its caller — decides which field carries which fact. `ChannelUi`
- * satisfies it structurally, and so does a projector state, which is what
- * lets the regression drive the real projection into a real mount.
+ * satisfies it structurally; the regression drives both the real projection
+ * and its live batch router into a real mount.
  */
 export type ProgramStatusChannel = {
   /** A turn is running. */
@@ -37,6 +37,10 @@ export type ProgramStatusChannel = {
    * successful turn, report the previous `completed` as a fresh `done`.
    */
   turnOutcome: 'completed' | 'interrupted' | 'error' | undefined
+  /** Live starts from the channel router, even if an entire turn fits in one render batch. */
+  liveTurnStarts: number
+  /** Changes on a rebind even when the backend keeps the same session id. */
+  agentBindingGeneration: number
   /** Short session label used as the record title. */
   sessionTitle: string
   /**
@@ -88,27 +92,31 @@ export function useProgramStatus(input: ProgramStatusInput): void {
   // tagged with the session it belongs to. A projected outcome is PERSISTED
   // state: a resumed session can still carry its previous turn's outcome, and
   // reporting that as a fresh `done` would claim work the user has not seen.
-  // Terminal states are therefore only reported on the falling edge of
-  // `working`. The tag matters because switching sessions in one process does
+  // Terminal states therefore need evidence of a live turn. The tag matters
+  // because switching sessions in one process does
   // not remount this tree, and the switch replays the target session's own
   // history — re-populating the outcome from its last turn.end. A latch left
   // over from the previous session would report that as a brand-new `done`.
-  const latchRef = useRef<{ sessionId: string; sawWorking: boolean }>({
+  const latchRef = useRef<{ sessionId: string; generation: number; sawWorking: boolean }>({
     sessionId: input.channel.sessionId,
+    generation: input.channel.agentBindingGeneration,
     sawWorking: false,
   })
 
   const { channel, blocked, enabled } = input
-  const { working, turnOutcome, sessionTitle, sessionId } = channel
+  const { working, turnOutcome, liveTurnStarts, agentBindingGeneration, sessionTitle, sessionId } = channel
 
   useEffect(() => {
     if (!enabled || !writeRaw) return
 
     // Adopting a different session starts a fresh latch; the projected
     // outcome now describes that session's past, not work observed in this one.
-    if (latchRef.current.sessionId !== sessionId) {
-      latchRef.current = { sessionId, sawWorking: false }
+    if (latchRef.current.sessionId !== sessionId || latchRef.current.generation !== agentBindingGeneration) {
+      latchRef.current = { sessionId, generation: agentBindingGeneration, sawWorking: false }
     }
+    // A synchronous start/end batch may never render `working=true`; the
+    // router's live count still distinguishes it from historical turn.end.
+    if (working || liveTurnStarts > 0) latchRef.current.sawWorking = true
 
     const derive = (): { state: ProgramState; kind?: ProgramBlockedKind; msg?: string } => {
       if (blocked !== null) return { state: 'blocked', kind: blocked.kind, msg: blocked.message }
@@ -129,7 +137,6 @@ export function useProgramStatus(input: ProgramStatusInput): void {
     }
 
     const { state, kind, msg } = derive()
-    if (working) latchRef.current.sawWorking = true
     const sequence = programStatus({
       state,
       app: PROGRAM_STATUS_APP,
@@ -141,5 +148,5 @@ export function useProgramStatus(input: ProgramStatusInput): void {
     if (sequence === '' || sequence === lastSequenceRef.current) return
     lastSequenceRef.current = sequence
     writeRaw(sequence)
-  }, [enabled, working, turnOutcome, blocked, sessionTitle, writeRaw, sessionId])
+  }, [enabled, working, turnOutcome, liveTurnStarts, agentBindingGeneration, blocked, sessionTitle, writeRaw, sessionId])
 }

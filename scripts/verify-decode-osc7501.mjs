@@ -209,6 +209,21 @@ check('初始报告只出一次，重复 poll 与追加渲染字节都不再出'
   assert.equal(tail.poll().length, 0)
 })
 
+check('每个分块边界都能补齐报告，包括 introducer 和 ST 内部', () => {
+  for (const terminator of ['\x07', '\x1b\\']) {
+    const report = `\x1b]7501;state=working:app=dsh-tui${terminator}`
+    for (let cut = 1; cut < report.length; cut++) {
+      const source = controller()
+      const tail = createIncrementalTail(source)
+      source.write(report.slice(0, cut))
+      assert.deepEqual(tail.poll(), [], `cut=${cut}`)
+      source.append(report.slice(cut))
+      assert.deepEqual(tail.poll(), scanChunk(report).entries, `cut=${cut}`)
+      assert.deepEqual(tail.poll(), [], '补齐后不重放')
+    }
+  }
+})
+
 check('追加半条报告再补齐，只新增一条', () => {
   const source = controller()
   const tail = createIncrementalTail(source)
