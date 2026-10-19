@@ -29,7 +29,7 @@ import { logForDebugging } from '../utils/debug.js'
 import { execFileNoThrow } from '../utils/execFileNoThrow.js'
 import type { ExecFileNoThrowOptions, ExecFileNoThrowResult } from '../utils/execFileNoThrow.js'
 import { stringWidth } from './stringWidth.js'
-import { truncateToWidth } from './truncateToWidth.js'
+import { getGraphemeSegmenter } from '../utils/intl.js'
 
 /** The process runner the ports below drive, as `execFileNoThrow` provides it. */
 type RunCommand = (
@@ -236,14 +236,21 @@ const TOAST_MESSAGE_MAX_WIDTH = 80
 /**
  * Clip a summary to {@link TOAST_MESSAGE_MAX_WIDTH}, with an ellipsis that says
  * the text continues. The ellipsis is one of those columns, so the text keeps
- * the rest. Cuts by display width, so it never stops between the two halves of
- * a wide glyph.
+ * the rest. Cuts between grapheme clusters so combined emoji stay whole.
  * @param message The single-line summary from the renderer.
  * @returns The summary, whole or clipped.
  */
 function clampSummary(message: string): string {
   if (stringWidth(message) <= TOAST_MESSAGE_MAX_WIDTH) return message
-  return `${truncateToWidth(message, TOAST_MESSAGE_MAX_WIDTH - 1)}…`
+  let width = 0
+  let clipped = ''
+  for (const { segment } of getGraphemeSegmenter().segment(message)) {
+    const segmentWidth = stringWidth(segment)
+    if (width + segmentWidth > TOAST_MESSAGE_MAX_WIDTH - 1) break
+    clipped += segment
+    width += segmentWidth
+  }
+  return `${clipped}…`
 }
 
 /**

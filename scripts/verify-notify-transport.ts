@@ -176,6 +176,11 @@ await check('an over-long summary is clipped to the two lines the toast can show
   assert.ok(stringWidth(body) <= 80, `the body must fit two lines, got ${stringWidth(body)} columns`)
   assert.ok(body.endsWith('…'), `a clipped summary says so instead of just stopping: ${body}`)
   assert.ok(message.startsWith(body.slice(0, -1)), 'the clip keeps the opening - it is a cut, not a rewrite')
+
+  const prefix = 'a'.repeat(77)
+  const family = '👨‍👩‍👧‍👦'
+  const [, boundary] = textNodes(toastXml({ title: TITLE, message: `${prefix}${family} tail` }))
+  assert.equal(boundary, `${prefix}${family}…`, 'the 79-column body budget keeps the entire family emoji before the ellipsis')
 })
 
 // --- the dedup decision (D8/AC-6) ---------------------------------------------
