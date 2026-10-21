@@ -7,6 +7,7 @@
  * are designed for end-user web/headless profiles, not a developer workspace
  * TUI.
  */
+import '../src/force-production-react.js'
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
 import { resolve, join, dirname } from 'node:path'
 import { homedir } from 'node:os'
@@ -19,14 +20,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 if (!process.env.DSH_HOME) {
   process.env.DSH_HOME = resolve(homedir(), '.dsh')
 }
-
-// Force React's production build BEFORE boot() pulls in the plugin tree.
-// react-reconciler's CJS entry picks development vs production on first
-// require; the development build records one performance.measure() per
-// component render into Node's perf_hooks buffer, which is UNBOUNDED —
-// streaming frames accumulated 1,004,767 PerformanceMeasure objects and
-// OOM'd a real session at 4GB in under 20 minutes (heapsnapshot evidence).
-process.env.NODE_ENV ??= 'production'
 
 // app-boot is loaded through pnpm symlink → lib/index.js. Rebuild after
 // src/ changes (pnpm run build or tsc -b + tsdown -F @deepseek-ai/dsh-app-boot).

@@ -371,26 +371,40 @@ const latestQuestion = (events: readonly AgentEvent[]): QuestionRequestView => {
   await closeAllCodexHubs()
 }
 
-// A `DSH_HOME` override must not orphan a key stored where both READMEs name
-// it: reads fall back to the default `~/.dsh` store while writes stay in the
-// active home.
+// Provider env_key refs can fall back to ~/.dsh; CHANNEL_* refs belong only
+// to the active home, so erase cannot reveal another home's old channel key.
 {
   const home = mkdtempSync(join(tmpdir(), 'dsh-creds-default-'))
   const active = mkdtempSync(join(tmpdir(), 'dsh-creds-active-'))
   mkdirSync(join(home, '.dsh'), { recursive: true })
-  writeFileSync(join(home, '.dsh', '.credentials.yaml'), `refs:\n  DEEPSEEK_API_KEY: ${API_KEY}\n`)
+  const channelRef = channelTokenRef('fallback-probe')
+  const fallback = `refs:\n  DEEPSEEK_API_KEY: ${API_KEY}\n  ${channelRef}: old-channel-token-sentinel\n`
+  writeFileSync(join(home, '.dsh', '.credentials.yaml'), fallback)
   const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
   const previousDshHome = process.env.DSH_HOME
   process.env.HOME = home
+  process.env.USERPROFILE = home
   process.env.DSH_HOME = active
   try {
     const store = fileChannelTokens()
     check('store: the default ~/.dsh store backs an active home that lacks the ref', store.read('DEEPSEEK_API_KEY') === API_KEY && store.declared('DEEPSEEK_API_KEY') && store.read('ABSENT_REF') === undefined)
+    check('store: a channel token in the default home is neither read nor declared in another home', store.read(channelRef) === undefined && !store.declared(channelRef))
+    store.erase(channelRef)
+    check('store: erasing a fallback-only channel leaves it unavailable', store.read(channelRef) === undefined && !store.declared(channelRef))
+    store.write(channelRef, API_KEY)
+    check('store: a channel token written in the active home is usable', store.read(channelRef) === API_KEY && store.declared(channelRef))
+    store.erase(channelRef)
+    const reopened = fileChannelTokens()
+    check('store: erasing the active channel does not resurrect the default-home token after reopen', reopened.read(channelRef) === undefined && !reopened.declared(channelRef))
+    check('store: channel erase preserves the default store and provider env_key fallback', readFileSync(join(home, '.dsh', '.credentials.yaml'), 'utf8') === fallback && reopened.read('DEEPSEEK_API_KEY') === API_KEY)
     store.write('CHANNEL_PROBE_TOKEN', API_KEY)
     check('store: a write still targets the active home', readFileSync(join(active, '.credentials.yaml'), 'utf8').includes('CHANNEL_PROBE_TOKEN') && !readFileSync(join(home, '.dsh', '.credentials.yaml'), 'utf8').includes('CHANNEL_PROBE_TOKEN'))
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousUserProfile
     if (previousDshHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousDshHome
     rmSync(home, { recursive: true, force: true })

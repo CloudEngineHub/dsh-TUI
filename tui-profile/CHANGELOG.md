@@ -9,6 +9,24 @@
 都必须在最新条目里写出**坐标与原因**——这是"历史坐标的语义变更怎么被发现"的唯一人工记录
 （digest 只回答哪个坐标变了，不回答哪一条变了；见 governance §2/§4）。
 
+## 2026-10-20（侧栏 Panel 新增渲染面：Markdown / CodeBlock）
+
+### Added（实验性，不在冻结范围）
+
+- 插件面板的 kit（`TuiPanelProps.ui`）增两个成员：`ui.Markdown`（收一段
+  markdown 正文）与 `ui.CodeBlock`（收原始代码 + 可选语言标签；围栏长度、
+  语言标签清洗与语法高亮由宿主负责，正文里出现三反引号也不会跑出围栏）。两者都是
+  **新定义的收窄包装**（`components/sidePanel/panelMarkdown.tsx`），只承诺
+  字符串入参：插件拿不到 marked 的 token、`CliHighlight` 句柄或 `ref`，
+  `Assert` 类型守卫把这条钉成编译错误。`TuiPanelMarkdownProps` /
+  `TuiPanelCodeBlockProps` 进 `./panels` 与 `./api`；`TuiPanelUi` /
+  `TuiPanelEvent` / `TuiPanelSummary` 此前只在 `./panels`，`./api` 这次一并
+  补齐。`apiVersion` 与 descriptor 形状均不变。
+  面板仍是实验面：首帧无语法高亮、面板不可选择/复制、块级公式跟随用户的
+  `mathRendering`；`ui.Markdown` 沿用聊天口径（先剥 prompt-analysis 标签块），
+  `ui.CodeBlock` 不剥这层（原始代码逐行保留）。限制与记忆化口径写在
+  `docs/plugins.md` 的侧栏 Panel 段。
+
 ## 2026-10-19（接缝十一：底栏插件字段）
 
 ### Added

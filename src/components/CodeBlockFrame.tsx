@@ -44,6 +44,10 @@ const WIDE_HEADER_MIN_COLUMNS = 56
 const MIN_NET_BODY_WIDTH = 8
 /** Rail column + the single padding column. */
 const FRAME_OVERHEAD = 2
+/** Keep hard-line insets selectable; soft-wrap padding is decoration. */
+const BODY_DECORATION: TextDecoration = {
+  prefix: { text: ' ', width: 1, continuationNoSelect: 1 },
+}
 
 /**
  * Which frame engine renders code fences. `typed` is the default;
@@ -103,10 +107,11 @@ export function CodeBlockFrame({ token, highlight, dimColor = false, forceWidth 
       header: headerText,
       headerFill,
       prefix: {
-        // The rail is excluded from selection; the padding column is not.
+        // Hard rows retain their inset; continuations copy only source text.
         text: colorize('│', theme.subtle, 'foreground') + ' ',
         width: FRAME_OVERHEAD,
         noSelect: 1,
+        continuationNoSelect: FRAME_OVERHEAD,
       },
     }
   }, [headerText, headerFill, emptyBody, theme.subtle])
@@ -156,8 +161,8 @@ export function CodeBlockFrame({ token, highlight, dimColor = false, forceWidth 
  * The `full` style: the hybrid layout with the box closed - a right wall
  * (a layout border, so it stays continuous across wrapped rows and
  * follows the content column) and a bottom edge under the whole block.
- * Header/rail/wall/bottom stay NoSelect; the body (and its padding
- * column) stay selectable - the same copy contract as the light frame.
+ * Header/rail/wall/bottom stay NoSelect; hard-line insets stay selectable
+ * and soft-wrap padding does not - the same contract as the light frame.
  */
 function CodeBlockFrameFull({
   contentWidth,
@@ -199,10 +204,12 @@ function CodeBlockFrameFull({
           borderBottom={false}
           borderColor={subtle}
         />
-        <Box paddingLeft={1} flexGrow={1}>
-          <Text dimColor={dimColor}>{body}</Text>
-        </Box>
+        {/* Paint the wall before the body so it cannot clear soft-wrap flags. */}
         <NoSelect
+          position="absolute"
+          right={0}
+          top={0}
+          bottom={0}
           borderStyle="single"
           borderRight
           borderTop={false}
@@ -210,6 +217,9 @@ function CodeBlockFrameFull({
           borderBottom={false}
           borderColor={subtle}
         />
+        <Box paddingRight={1} flexGrow={1} flexBasis={0}>
+          <Text dimColor={dimColor} decoration={BODY_DECORATION}>{body}</Text>
+        </Box>
       </Box>
       <NoSelect
         borderStyle="single"
@@ -270,8 +280,8 @@ function CodeBlockFrameHybrid({
           borderBottom={false}
           borderColor={subtle}
         />
-        <Box paddingLeft={1}>
-          <Text dimColor={dimColor}>{body}</Text>
+        <Box flexGrow={1} flexBasis={0}>
+          <Text dimColor={dimColor} decoration={BODY_DECORATION}>{body}</Text>
         </Box>
       </Box>
     </Box>

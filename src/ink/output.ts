@@ -807,6 +807,18 @@ export default class Output {
   }
 
   noSelect(region: Rectangle): void {
+    // Masks are applied after all paint operations, when the clip stack
+    // has unwound. Capture the visible part now so a long decorated run
+    // cannot exclude selectable cells on a neighboring surface.
+    const clip = this.imageClips.at(-1)
+    if (clip !== undefined) {
+      const x = Math.ceil(Math.max(0, region.x, clip.x1 ?? 0))
+      const y = Math.ceil(Math.max(0, region.y, clip.y1 ?? 0))
+      const right = Math.floor(Math.min(this.width, region.x + region.width, clip.x2 ?? this.width))
+      const bottom = Math.floor(Math.min(this.height, region.y + region.height, clip.y2 ?? this.height))
+      if (right <= x || bottom <= y) return
+      region = { x, y, width: right - x, height: bottom - y }
+    }
     this.operations.push({ type: 'noSelect', region })
   }
 

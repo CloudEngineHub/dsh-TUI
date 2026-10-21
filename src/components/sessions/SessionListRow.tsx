@@ -5,6 +5,8 @@ import type { ClickEvent } from '../../ink/events/click-event.js'
 import type { ContextMenuEvent } from '../../ink/events/context-menu-event.js'
 import { useTooltip } from '../Tooltip.js'
 import { SpinnerGlyph } from '../Spinner/SpinnerGlyph.js'
+import { useAnimationFrame } from '../../ink/hooks/use-animation-frame.js'
+import { useTerminalFocus } from '../../ink/hooks/use-terminal-focus.js'
 import { stringWidth } from '../../ink/stringWidth.js'
 import { useDeclaredCursor, useNativeCursor } from '../../ink/hooks/use-declared-cursor.js'
 import {
@@ -42,6 +44,17 @@ const LIVE_STATUS_COLOR: Readonly<Record<AgentViewStatus, 'warning' | 'suggestio
   stopped: undefined,
 }
 
+/** Only a visible working glyph subscribes; the session list does not tick. */
+function WorkingGlyph(): React.ReactNode {
+  const focused = useTerminalFocus()
+  const [ref, time] = useAnimationFrame(focused ? 120 : null)
+  return (
+    <Box ref={ref}>
+      <SpinnerGlyph frame={Math.floor(time / 120)} time={time} messageColor="suggestion" reducedMotion={false} />
+    </Box>
+  )
+}
+
 /**
  * One session in the browser's list: a title line and a metadata line.
  *
@@ -69,7 +82,6 @@ export function SessionListRow({
   liveStatus,
   current,
   occupiedPid,
-  spinner,
 }: {
   session: SessionSummary
   /** Columns available to the row, indentation included. */
@@ -105,8 +117,6 @@ export function SessionListRow({
    * not break. Undefined means free, or already ours.
    */
   occupiedPid?: number
-  /** Shared animation clock for the working glyph. */
-  spinner?: { frame: number; time: number }
 }): React.ReactNode {
   const indent = depth * 2
   const nativeCursor = useNativeCursor()
@@ -196,13 +206,8 @@ export function SessionListRow({
             occupied one is a red ⊘; a session this terminal is not running
             holds the same two columns blank. */}
         <Box>
-          {liveStatus === 'working' && !occupied && spinner !== undefined ? (
-            <SpinnerGlyph
-              frame={spinner.frame}
-              messageColor="suggestion"
-              reducedMotion={false}
-              time={spinner.time}
-            />
+          {liveStatus === 'working' && !occupied ? (
+            <WorkingGlyph />
           ) : (
             <Text color={stateColor} dimColor={liveStatus === undefined && !occupied}>
               {`${stateGlyph} `}

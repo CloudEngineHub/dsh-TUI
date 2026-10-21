@@ -19,6 +19,10 @@
  *  7. codeFrameStyle setting: light default, full box, round trip.
  *  8. A Text gaining or losing its decoration keeps its hook count.
  *  9. Measure matches paint, and decoration never paints past its node.
+ * 10. Code soft wraps copy source characters across styles and engines;
+ *     partial, reverse, clipped and scrolled selections keep that contract.
+ * 11. Alternating hard/soft masks replay only the visible runs on cache hits.
+ * 12. Real full-width ScrollBox shifts carry wrap metadata with their rows.
  *
  * Run: node --import tsx/esm scripts/verify-markdown-typed-decoration.tsx
  */
@@ -33,7 +37,7 @@ const [
   { cellAtIndex },
   { stringWidth },
   { TerminalSizeContext },
-  { render, Box, Text },
+  { render, Box, Text, ScrollBox, AlternateScreen },
   { Markdown },
   { StreamingMarkdown },
   { CodeBlockFrame },
@@ -500,5 +504,232 @@ const shortBody = snap(
 )
 assert.equal(shortBody.rows[0], '\u250c\u2500 typescript', 'a label that fits is painted whole')
 console.log('9. measure matches paint under wrap-ansi width drift; narrow hang and long header stay in the node')
+
+// -- 10. Code soft wraps copy source characters, not frame padding -------
+
+const LONG_CODE = 'x'.repeat(60)
+const CODE_COPIES: Array<[string, string]> = [
+  [LONG_CODE, LONG_CODE],
+  [WORDS, WORDS],
+  ['中文测试'.repeat(20), '中文测试'.repeat(20)],
+  ['á🚀'.repeat(20), 'á🚀'.repeat(20)],
+  ['head\n  ' + LONG_CODE + '\n\nend  ', 'head\n   ' + LONG_CODE + '\n\n end'],
+  ['\t' + 'x'.repeat(90) + '\n  tail  ', '        ' + 'x'.repeat(90) + '\n   tail'],
+]
+for (const style of ['light', 'full'] as const) {
+  applyCodeFrameStyle(style)
+  for (const engine of ['typed', 'hybrid']) {
+    process.env.DSH_TUI_CODE_FRAME = engine
+    for (const width of [20, 21, 24, 40, 60, 80]) {
+      for (const [text, expected] of CODE_COPIES) {
+        const frame = snap(<CodeBlockFrame token={codeToken('txt', text)} highlight={null} />, width)
+        const lastBody = style === 'full' ? frame.rows.length - 2 : frame.rows.length - 1
+        assert.equal(copyRect(frame.screen, [2, 1], [width - 1, lastBody]), expected,
+          `${style}/${engine}@${width}: source characters, hard-line insets, blank lines and trailing trim`)
+        assert.equal(copyRect(frame.screen, [width - 2, lastBody], [2, 1]), expected,
+          `${style}/${engine}@${width}: reverse body selection`)
+        for (let y = 1; y <= lastBody; y++) {
+          assert.equal(frame.screen.noSelect[y * width + 1], frame.screen.softWrap[y] ? 1 : 0,
+            `${style}/${engine}@${width}: only a soft continuation masks its inset at row ${y}`)
+          if (style === 'full') assert.ok(frame.rows[y]!.endsWith(RAIL), 'body paint preserves the right wall')
+        }
+      }
+    }
+    const frame = snap(<CodeBlockFrame token={codeToken('txt', LONG_CODE)} highlight={null} />, 20)
+    const lastBody = style === 'full' ? frame.rows.length - 2 : frame.rows.length - 1
+    const budget = style === 'full' ? 17 : 18
+    assert.equal(copyRect(frame.screen, [5, 1], [7, 2]), 'x'.repeat(budget - 3 + 6),
+      `${style}/${engine}: partial selection spans the soft break without its inset`)
+    assert.equal(copyRect(frame.screen, [7, 2], [5, 1]), 'x'.repeat(budget - 3 + 6),
+      `${style}/${engine}: reverse partial selection`)
+    assert.equal(copyRect(frame.screen, [0, 1], [1, 1]), RAIL, 'rail-only anchor still selects decoration')
+    assert.ok(copyRect(frame.screen, [0, 0], [10, 0]).startsWith('┌─ txt'), 'header anchor selects the header')
+
+    const clipped = snap(
+      <Box height={3} overflow="hidden"><Box marginTop={-2} flexShrink={0} height={frame.rows.length}>
+        <CodeBlockFrame token={codeToken('txt', LONG_CODE)} highlight={null} />
+      </Box></Box>, 20,
+    )
+    assert.ok(clipped.screen.softWrap[0], 'top-clipped first row retains its continuation marker')
+    assert.equal(copyRect(clipped.screen, [2, 0], [19, 2]), 'x'.repeat(60 - budget),
+      `${style}/${engine}: a selection starting on a clipped continuation copies only visible source`)
+
+    const selected = selection.createSelectionState()
+    selection.startSelection(selected, 2, 1, frame.screen)
+    selection.updateSelection(selected, 19, lastBody)
+    selection.finishSelection(selected)
+    assert.equal(selection.refreshSelectionFingerprint(selected, frame.screen, false), false)
+    const same = snap(<CodeBlockFrame token={codeToken('txt', LONG_CODE)} highlight={null} />, 20)
+    assert.equal(selection.refreshSelectionFingerprint(selected, same.screen, false), false,
+      'an identical decorated frame keeps the selection valid')
+    const changed = snap(<CodeBlockFrame token={codeToken('txt', 'y'.repeat(60))} highlight={null} />, 20)
+    assert.equal(selection.refreshSelectionFingerprint(selected, changed.screen, false), true,
+      'changed code still invalidates the selection')
+
+    const scrolled = selection.createSelectionState()
+    selection.startSelection(scrolled, 2, 1, frame.screen)
+    selection.updateSelection(scrolled, 19, lastBody)
+    selection.captureScrolledRows(scrolled, frame.screen, 1, 1, 'above')
+    const { shiftRows } = await import('../src/ink/screen.js')
+    shiftRows(frame.screen, 1, lastBody, 1)
+    scrolled.anchor = { col: 0, row: 1 }
+    scrolled.focus = { col: 19, row: lastBody - 1 }
+    assert.equal(selection.getSelectedText(scrolled, frame.screen), LONG_CODE,
+      `${style}/${engine}: captured and visible soft rows join once after scroll`)
+  }
+}
+applyCodeFrameStyle('light')
+process.env.DSH_TUI_CODE_FRAME = 'typed'
+// The existing wrap path normalizes combining characters; an unwrapped
+// line keeps its original code points. This is screen copy, not source export.
+const combining = 'a\u0301'.repeat(60)
+const combined = snap(<CodeBlockFrame token={codeToken('txt', combining)} highlight={null} />, 20)
+assert.equal(copyRect(combined.screen, [2, 1], [19, combined.rows.length - 1]), 'á'.repeat(60))
+const unwrapped = snap(<CodeBlockFrame token={codeToken('txt', combining)} highlight={null} />, 80)
+assert.equal(copyRect(unwrapped.screen, [2, 1], [79, 1]), combining)
+console.log('10. code copy: 144 style/engine/width/payload cases, reverse/partial/clip/scroll/fingerprint, hard-line and Unicode contracts')
+
+// -- 11. A prepared long block replays only its visible decoration runs --
+
+const [{ createNode, createTextNode, appendChildNode, setStyle, setTextNodeValue },
+  { default: Output }, { default: paint }, { textPaintCache },
+  { createScreen, StylePool, CharPool, HyperlinkPool }] = await Promise.all([
+  import('../src/ink/dom.js'), import('../src/ink/output.js'),
+  import('../src/ink/render-node-to-output.js'), import('../src/ink/node-cache.js'),
+  import('../src/ink/screen.js'),
+])
+const codeDecoration = { prefix: { text: RAIL + ' ', width: 2, noSelect: 1, continuationNoSelect: 2 } }
+{
+  const styles = new StylePool()
+  const screen = createScreen(8, 6, styles, new CharPool(), new HyperlinkPool())
+  const output = new Output({ width: 8, height: 6, stylePool: styles, screen })
+  output.clip({ x1: 0.5, x2: 4.5, y1: 1.5, y2: 4.5 })
+  output.noSelect({ x: 0, y: 0, width: 8, height: 6 })
+  output.unclip()
+  const clipped = output.get()
+  for (let y = 0; y < 6; y++) {
+    for (let x = 0; x < 8; x++) {
+      assert.equal(clipped.noSelect[y * 8 + x], x >= 1 && x < 4 && y >= 2 && y < 4 ? 1 : 0,
+        `fractional clips mask only whole visible cells, never a different row's columns (${x},${y})`)
+    }
+  }
+}
+for (const sourceRows of [100, 10_000]) {
+  const root = createNode('ink-root')
+  const leaf = createNode('ink-text')
+  const text = createTextNode(Array(sourceRows).fill('x'.repeat(20)).join(NL))
+  setStyle(leaf, { textWrap: 'wrap', decoration: codeDecoration })
+  appendChildNode(leaf, text)
+  appendChildNode(root, leaf)
+  const styles = new StylePool()
+  const chars = new CharPool()
+  const links = new HyperlinkPool()
+  const repaint = (width: number, offsetY: number, clipLeft = 0) => {
+    root.yogaNode!.setWidth(width)
+    root.yogaNode!.calculateLayout(width)
+    const screen = createScreen(width, 12, styles, chars, links)
+    const output = new Output({ width, height: 12, stylePool: styles, screen })
+    let masks = 0
+    const noSelect = output.noSelect.bind(output)
+    output.noSelect = region => { masks++; noSelect(region) }
+    output.clip({ x1: clipLeft, x2: width, y1: 2, y2: 10 })
+    paint(root, output, { offsetY, prevScreen: undefined })
+    output.unclip()
+    return { screen: output.get(), masks }
+  }
+  repaint(20, -sourceRows)
+  const prepared = textPaintCache.get(leaf)!
+  assert.ok(prepared.noSelectRuns!.length >= sourceRows, 'fixture alternates hard/soft row masks')
+  let reads = 0
+  prepared.noSelectRuns = new Proxy(prepared.noSelectRuns!, {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) reads++
+      return Reflect.get(target, key, receiver)
+    },
+  })
+  const cached = repaint(20, -sourceRows - 2)
+  assert.equal(textPaintCache.get(leaf), prepared, 'scroll reuses the prepared decoration')
+  assert.equal(cached.masks, 8, `${sourceRows} source rows replay exactly eight visible masks`)
+  assert.ok(reads <= Math.ceil(Math.log2(prepared.noSelectRuns!.length)) + 14,
+    `cached mask work is logarithmic plus screen rows, not source rows: ${reads}`)
+  assert.equal(copyRect(cached.screen, [2, 2], [19, 9]),
+    Array(4).fill('x'.repeat(20)).join(NL + ' '), 'cache-hit masks keep hard insets and join soft rows')
+  for (const width of [40, 20, 40]) {
+    const resized = repaint(width, -10)
+    const expected = width === 40
+      ? Array(8).fill('x'.repeat(20)).join(NL + ' ')
+      : Array(4).fill('x'.repeat(20)).join(NL + ' ')
+    assert.equal(copyRect(resized.screen, [2, 2], [width - 1, 9]), expected,
+      `resize to ${width} invalidates the cached wrap and masks`)
+  }
+  setTextNodeValue(text, Array(sourceRows).fill('y'.repeat(20)).join(NL))
+  const updated = repaint(20, -10)
+  assert.equal(copyRect(updated.screen, [2, 2], [19, 9]),
+    Array(4).fill('y'.repeat(20)).join(NL + ' '), 'changed body invalidates prepared copy data')
+  setTextNodeValue(text, 'z'.repeat(20 * sourceRows))
+  const singleLine = repaint(20, -10)
+  for (const y of [0, 1, 10, 11]) {
+    assert.equal(singleLine.screen.noSelect[y * 20 + 1], 0,
+      `one long continuation run cannot mask another surface outside the clip at row ${y}`)
+  }
+  const horizontalClip = repaint(20, -10, 1)
+  assert.equal(horizontalClip.screen.noSelect[2 * 20], 0, 'a clipped rail cannot mask the left neighbor')
+  assert.equal(horizontalClip.screen.noSelect[2 * 20 + 1], 1, 'the visible continuation inset remains excluded')
+  root.yogaNode!.freeRecursive()
+  console.log(`11. ${sourceRows} source rows: 8 visible masks; ${reads} indexed run reads on a cache hit; resize and content invalidation passed`)
+}
+
+// -- 12. The real scroll fast path preserves continuation rows ----------
+
+for (const shape of ['plain', 'light/typed', 'light/hybrid', 'full/typed', 'full/hybrid']) {
+  const [style, engine] = shape.split('/')
+  applyCodeFrameStyle(style === 'full' ? 'full' : 'light')
+  process.env.DSH_TUI_CODE_FRAME = engine ?? 'typed'
+  const stdout = new FrameOutput()
+  stdout.columns = 20
+  stdout.rows = 16
+  const scroll = React.createRef<import('../src/ui.js').ScrollBoxHandle>()
+  const tree = (version: number) => (
+    <AlternateScreen>
+      <Box width={20} flexDirection="column">
+        <ScrollBox ref={scroll} height={6} flexDirection="column">
+          <Box flexDirection="column" flexShrink={0}>
+            {shape === 'plain'
+              ? <Text>{'HEADER' + NL + 'x'.repeat(360)}</Text>
+              : <CodeBlockFrame token={codeToken('txt', 'x'.repeat(360))} highlight={null} forceWidth={20} />}
+          </Box>
+        </ScrollBox>
+        <Text>{'END ' + version}</Text>
+      </Box>
+    </AlternateScreen>
+  )
+  const app = await render(tree(0), {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stdin: new FrameInput() as unknown as NodeJS.ReadStream,
+    exitOnCtrlC: false, patchConsole: false,
+  })
+  const ink = instances.get(stdout as unknown as NodeJS.WriteStream)!
+  ink.setAltScreenActive(true, true)
+  app.rerender(tree(1))
+  const screen = () => ink.frontFrame.screen
+  const header = shape === 'plain' ? 'H' : '\u250c'
+  assert.ok(await settled(() => cellAtIndex(screen(), 0).char === header), shape + ': first frame')
+  const bodyX = shape === 'plain' ? 0 : 2
+  const bodyWidth = shape === 'plain' ? 20 : style === 'full' ? 17 : 18
+  for (const top of [3, 1, 3]) {
+    scroll.current!.scrollTo(top)
+    assert.ok(await settled(() => cellAtIndex(screen(), bodyX).char === 'x' &&
+      Boolean(screen().softWrap[0]) === (top > 1)), shape + ': scroll frame committed')
+    assert.equal(copyRect(screen(), [bodyX, 0], [19, 5]), 'x'.repeat(bodyWidth * 6),
+      `${shape}: scrollTo(${top}) copies six source segments without an added newline`)
+    for (let row = 1; row < 6; row++) assert.ok(screen().softWrap[row], 'visible continuation keeps its wrap flag')
+    assert.equal(screen().noSelect[6 * 20 + 1], 0, 'scroll mask does not cover the footer')
+  }
+  scroll.current!.scrollTo(0)
+  assert.ok(await settled(() => cellAtIndex(screen(), 0).char === header), shape + ': header restored')
+  assert.equal(screen().softWrap[1], 0, 'the first hard source row stays hard after scrolling back')
+  await app.unmount()
+}
+console.log('12. real full-width ScrollBox: plain/typed/hybrid, both frames, scroll down/up/back, copy and footer mask')
 
 console.log('markdown typed decoration verified (engine equivalence, structure counts, copy contract, hanging continuations, fingerprint, mermaid sharing, cache identity, frame style, decoration toggle, measure/paint agreement)')

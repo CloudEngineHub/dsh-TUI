@@ -6,6 +6,8 @@ import { alive, mix } from '../../trajectory/motion.js'
 import { parseRGB } from '../Spinner/spinnerUtils.js'
 import { dominantChannel } from '../../dsh-adapter/trajectory/index.js'
 import type { WaveBand, WaveChannel } from '../../dsh-adapter/types.js'
+import { useAnimationFrame } from '../../ink/hooks/use-animation-frame.js'
+import { useTerminalFocus } from '../../ink/hooks/use-terminal-focus.js'
 
 /**
  * The mini wake — the whole session as a dozen glyphs in the status line.
@@ -65,7 +67,7 @@ export function miniWakeWidth(columns: number): number {
 export function MiniWake({
   band,
   hint,
-  tick,
+  working,
   onOpen,
   hoverHint,
 }: {
@@ -76,7 +78,7 @@ export function MiniWake({
    * opened for the first time. Absent afterwards.
    */
   hint?: string
-  tick: number
+  working: boolean
   /**
    * Open the trajectory scene. The strip is the conversation's permanent
    * pointer at that second view, so pointing AT it and clicking is the
@@ -91,11 +93,13 @@ export function MiniWake({
   const [themeName] = useTheme()
   const theme = getTheme(themeName)
   const [hovered, setHovered] = React.useState(false)
+  const focused = useTerminalFocus()
+  const [animationRef, time] = useAnimationFrame(working && focused && band.buckets.length > 0 ? 120 : null)
   if (band.buckets.length === 0) return null
 
   const logFloor = Math.log1p(Math.max(0, band.floor))
   const logSpan = Math.max(1e-6, Math.log1p(Math.max(1, band.peak)) - logFloor)
-  const breath = alive(tick)
+  const breath = alive(Math.floor(time / 120))
 
   let strip = ''
   for (const bucket of band.buckets) {
@@ -126,6 +130,7 @@ export function MiniWake({
   return (
     <NoSelect>
       <Box
+        ref={animationRef}
         flexShrink={0}
         flexDirection="row"
         gap={1}

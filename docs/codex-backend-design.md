@@ -262,7 +262,9 @@ export function spawnTransport(options: TransportOptions): Transport
 - 凭据库读取顺序（`utils/credentials.ts`、`backends/shared/channel-tokens.ts`）：先活动 home 的
   `.credentials.yaml`（`$DSH_HOME`，未设置时为 `~/.dsh`），再回退默认 `~/.dsh/.credentials.yaml`——
   `DSH_HOME` 覆盖不再让写在文档位置（README 与 `/doctor` 都点名 `~/.dsh`）的 key 失联。**写只进活动
-  home**，回退只影响读；启动器 `bin/dsh-tui.js` 的 doctor 镜像同一顺序，两处不许分叉。
+  home**，回退只影响 provider env_key 等宿主密钥；`CHANNEL_*` 渠道令牌的 read/declared
+  只查活动 home，与 write/erase 同属一处，断开后不复活默认库的旧令牌。启动器
+  `bin/dsh-tui.js` 的 doctor 对 provider 密钥镜像同一回退顺序。
 
 ### 5.2 `rpc/client.ts`
 

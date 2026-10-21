@@ -16,7 +16,6 @@ import { ApprovalPanel } from '../components/approvals/ApprovalPanel.js'
 import type { PermissionPanelDecision, PermissionPanelOutcome, PermissionPanelSnapshot } from '../channel/permissions.js'
 import { useTerminalFocus } from '../ink/hooks/use-terminal-focus.js'
 import { useDeclaredCursor, useNativeCursor } from '../ink/hooks/use-declared-cursor.js'
-import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
 import { isPlainReturn, isMod } from '../utils/modifiers.js'
 import { truncateWidth, wrapPathWidth } from '../sessions/format.js'
 import { clearTooltip, useTooltip } from '../components/Tooltip.js'
@@ -479,13 +478,9 @@ export function SessionSupervisor({
     }
   })
 
-  // Working rows animate their glyph. The shared clock only runs while at
-  // least one row is working, so an idle screen costs no extra ticks.
   const workingCount = listedSessions.filter(
     session => liveStateOf(session.id)?.status === 'working',
   ).length
-  const [, spinnerTime] = useAnimationFrame(workingCount > 0 ? 120 : null)
-  const spinnerFrame = Math.floor(spinnerTime / 120)
 
   /**
    * Keys on a source tab: the same pane model as DSH (←/→ pick the column,
@@ -819,7 +814,6 @@ export function SessionSupervisor({
                   liveStatus={state?.live === true ? state.status : undefined}
                   current={state?.current === true}
                   occupiedPid={holder}
-                  spinner={{ frame: spinnerFrame, time: spinnerTime }}
                   onClick={(event): void => {
                     event.stopImmediatePropagation()
                     setFocusSessionId(session.id)

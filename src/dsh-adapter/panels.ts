@@ -99,6 +99,25 @@ export type TuiPanelDividerProps = React.ComponentProps<
 >
 
 /**
+ * 面板内 markdown 正文：只收字符串。宽度走面板作用域的 TerminalSizeContext
+ * （PanelHost 已把 columns 收窄到面板宽），主题走只读 useTheme。
+ *
+ * 与上面几个**刻意不同**：它们是「直通宿主组件、只砍危险 prop」的 Omit 收窄，
+ * 这两个是**新定义的包装面**——只承诺一个字段，宿主组件的 props、实现与依赖
+ * 怎么改都不动这里的契约（包装在 components/sidePanel/panelMarkdown.tsx）。
+ */
+export interface TuiPanelMarkdownProps {
+  readonly children: string
+}
+
+/** 面板内单个代码块：收原始文本 + 可选语言标签；围栏长度、语言标签清洗与
+ *  语法高亮都由宿主包装层负责，插件拿不到 token 或 highlight 句柄。 */
+export interface TuiPanelCodeBlockProps {
+  readonly code: string
+  readonly language?: string
+}
+
+/**
  * 面板内 UI kit：宿主 React + 收窄组件 + Panel 尺寸感知。钩子和元素
  * 必须走宿主 React（与 plugin scene 同一 single-React 规则）。
  */
@@ -119,7 +138,45 @@ export interface TuiPanelUi {
   readonly useAnimationTime: (intervalMs: number | null) => number
   /** 只读主题。 */
   readonly useTheme: typeof import('../ui.js').useTheme
+  /** 面板内 markdown 正文（实验性）；只收字符串，拿不到 token/句柄。 */
+  readonly Markdown: React.ComponentType<TuiPanelMarkdownProps>
+  /** 面板内单个代码块（实验性）；围栏与高亮由宿主负责。 */
+  readonly CodeBlock: React.ComponentType<TuiPanelCodeBlockProps>
 }
+
+// ── 两个新成员的类型守卫（照 status.ts 的 Assert 写法）────────────────────
+//
+// 把「成员必须是收窄包装、不能换成原组件」钉成编译错误：一旦有人把成员换回
+// `typeof Markdown` / `CodeBlockFrame`，ComponentProps 里就会重新出现
+// token/highlight/dimColor 这些字段，Extract 不再是 never，Assert<false> 直接红。
+
+type Assert<T extends true> = T
+
+type _TuiPanelMarkdownForbidsHostProps = Assert<
+  Extract<
+    'dimColor' | 'cacheTokens' | 'inlineMathImages',
+    keyof React.ComponentProps<TuiPanelUi['Markdown']>
+  > extends never
+    ? true
+    : false
+>
+
+type _TuiPanelMarkdownRequiresChildren = Assert<
+  'children' extends keyof React.ComponentProps<TuiPanelUi['Markdown']> ? true : false
+>
+
+type _TuiPanelCodeBlockForbidsTokensAndHandle = Assert<
+  Extract<
+    'token' | 'highlight' | 'dimColor' | 'forceWidth' | 'ref',
+    keyof React.ComponentProps<TuiPanelUi['CodeBlock']>
+  > extends never
+    ? true
+    : false
+>
+
+type _TuiPanelCodeBlockRequiresCode = Assert<
+  'code' extends keyof React.ComponentProps<TuiPanelUi['CodeBlock']> ? true : false
+>
 
 export type TuiPanelBadgeLevel = 'info' | 'warning' | 'error'
 export type TuiPanelMode = 'split' | 'zoom' | 'fullscreen'

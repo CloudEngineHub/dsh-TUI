@@ -57,6 +57,17 @@
   descriptor、尚不挂载渲染**；`sendToChat` 需要 `panels.chat.attach`
   授权（后续版本），当前恒返回 `false` 并提示一次。类型见
   `@deepseek-harness-tui/dsh-tui/panels` 与 `./api`。
+  面板正文可用 `ui.Markdown` / `ui.CodeBlock`（实验性，收窄包装）：前者收一段
+  markdown 字符串，后者收原始代码与可选语言标签（围栏长度、语言标签清洗与
+  语法高亮由宿主负责）。`ui.Markdown` 与聊天正文同一口径：宿主会先剥离
+  `<commit_analysis>` / `<context>` / `<function_analysis>` / `<pr_analysis>`
+  标签块（代码围栏内也会）；`ui.CodeBlock` 不做这层剥离，原始代码逐行保留。
+  四条限制：① **首帧无语法高亮**（`cli-highlight` 异步
+  加载完成后补上，与宿主正文同理）；② 面板**不可选择/复制**（侧栏整列
+  `noSelect`，复制能力位另议）；③ 块级 `$$` 公式**跟随用户的 `mathRendering`
+  偏好**（终端支持图形时走图片），行内公式不走图片、仍排成 Unicode；④ 正文
+  内容**保持不变**才能命中 `React.memo`（字符串按值比较，内容相同的新字符串
+  一样命中；只有内容变化才重跑格式化与排版，分词按内容缓存）。
 - `@deepseek-harness-tui/dsh-tui/test-utils` 子路径与
   `ctx.tuiPluginHost.grants.corrupt` 已随 adapter 分层重构（#705）移除。
 - **后端贡献族（`tui.dsh/v1alpha1` `Backend`，接缝十四）的公开面已随第一版 apiVersion 冻结**：类型面

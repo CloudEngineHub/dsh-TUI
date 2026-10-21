@@ -39,6 +39,14 @@ type Props = {
    * mid-stream would re-wrap under the reader; the settled message switches.
    */
   inlineMathImages?: boolean
+  /**
+   * Whether to strip the model-internal prompt-analysis tag blocks
+   * (`<commit_analysis>`, `<context>`, `<function_analysis>`, `<pr_analysis>`)
+   * before lexing. Chat prose keeps the default; the plugin panel's
+   * `ui.CodeBlock` passes false so its raw code reaches the screen line for
+   * line (that API promises raw code, not the chat's pre-processing).
+   */
+  stripPromptTags?: boolean
 }
 
 /**
@@ -259,7 +267,7 @@ function renderTokensToNodes(
  * block — the dominant long-output stall (string-width via wrap-ansi, 60%+
  * of CPU in streaming profiles).
  */
-function MarkdownImpl({ children, dimColor = false, cacheTokens = true, inlineMathImages = true }: Props): React.ReactNode {
+function MarkdownImpl({ children, dimColor = false, cacheTokens = true, inlineMathImages = true, stripPromptTags = true }: Props): React.ReactNode {
   const [highlight, setHighlight] = React.useState<CliHighlight | null>(null)
   // Inline math is baked into the ANSI text, so the switch must invalidate
   // the memo below (MathBlock nodes subscribe on their own).
@@ -284,7 +292,7 @@ function MarkdownImpl({ children, dimColor = false, cacheTokens = true, inlineMa
   configureMarked()
 
   const renderedNodes = React.useMemo(() => {
-    const source = stripPromptXMLTags(children)
+    const source = stripPromptTags ? stripPromptXMLTags(children) : children
     return renderTokensToNodes(
       lexWithCache(source, cacheTokens),
       highlight,
@@ -292,7 +300,7 @@ function MarkdownImpl({ children, dimColor = false, cacheTokens = true, inlineMa
       // Dimmed text (thinking) cannot dim an image, so it keeps Unicode.
       inlineMathImages && mathRendering === 'image' && !dimColor,
     )
-  }, [children, dimColor, highlight, cacheTokens, mathRendering, inlineMathImages, palette])
+  }, [children, dimColor, highlight, cacheTokens, mathRendering, inlineMathImages, palette, stripPromptTags])
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -311,5 +319,6 @@ export const Markdown = React.memo(
     prev.children === next.children &&
     prev.dimColor === next.dimColor &&
     prev.cacheTokens === next.cacheTokens &&
-    prev.inlineMathImages === next.inlineMathImages,
+    prev.inlineMathImages === next.inlineMathImages &&
+    prev.stripPromptTags === next.stripPromptTags,
 )

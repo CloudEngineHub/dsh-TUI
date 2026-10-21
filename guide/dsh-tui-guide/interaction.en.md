@@ -16,7 +16,7 @@
 | `Ctrl+V` / `Alt+V` | Insert clipboard text or files; images are sent as durable attachments. Use `Alt+V` when the terminal intercepts `Ctrl+V` |
 | `Ctrl+G` | Edit the current input in an external editor (`$VISUAL` → `$EDITOR`); saving and quitting fills it back, `:cq`/non-zero exit keeps the draft; with neither variable set the TUI asks you to configure one (no `vi` fallback) |
 | `Ctrl+Shift+E` | Expand the fullscreen draft editor (or click the `⛶` affordance at the end of the input row): line numbers + current-line highlight + live line/char stats<br>`Enter` inserts a newline, `Ctrl+Enter` or the Send button sends, `Esc` or the Collapse button keeps the draft and returns<br>wheel-scrolls freely; click/drag/double-click selection work as in the inline prompt; remappable via `/settings` |
-| `Esc` | Ladder: close help → close the image preview → close the command menu → close the file menu (only the current `@` token)<br>→ **with a selection in the prompt input: only clear it (text untouched)** → with the held-queue selector open: only leave the selector → interrupt the turn and hold the queued messages (no automatic re-send, see "Message delivery semantics") → clear non-empty input → double-tap on empty input = rewind<br>in fullscreen, an active mouse selection is cleared first (not copied) |
+| `Esc` | Ladder: close help → close the image preview → close the command menu → close the file menu (only the current `@` token)<br>→ with the held-queue selector open: only leave the selector → **with a selection in the prompt input: only clear it (text untouched)** → collapse the draft editor → unfold a pasted block → remove context chips → interrupt the turn and hold the queued messages (ordinary draft kept; no automatic re-send, see "Message delivery semantics") → clear non-empty idle input → double-tap on empty idle input = rewind<br>in fullscreen, an active mouse selection is cleared first (not copied) |
 | `Ctrl+Z` | Undo the prompt draft's last word-level edit (text, caret and images together). Draft-only: a submit, a history recall (`Ctrl+R`/`↑`) or a session switch ends the history; it is NOT the message/conversation rewind behind `Esc Esc`. Remappable via `/settings` |
 | `Esc` / `Ctrl+C` / `Enter` while an image preview is open | Close the preview and restore the surface underneath; other keys are not passed through |
 | `Left` / `Right` in the image modal | Previous / next image, no wrapping; caret peeks keep arrows with the prompt |
@@ -157,12 +157,12 @@ results back to the chat screen and add no new behavior.
 | Key | Behavior |
 | --- | --- |
 | `Left/Right` | Move by character; **with a selection, collapse to the corresponding edge** |
-| `Ctrl+Left/Right` | Move by word |
+| `Ctrl+Left/Right` / `Alt/Option+Left/Right` | Move by whitespace-delimited words; also supported on the launchpad |
 | `Home/End` | Move to the start/end of the current logical line |
 | `Ctrl+A` / `Ctrl+E` | `Ctrl+A` opens the subagent dashboard (`Mod+A` in the editor still moves to line start); `Ctrl+E` moves to line end and also expands or folds hidden older rows in long transcripts |
 | `Ctrl+U` | Delete before the caret |
 | `Ctrl+K` | Delete after the caret |
-| `Ctrl+W` | Delete the preceding word |
+| `Ctrl+W` / `Alt/Option+Backspace` | Delete the preceding word; staged image attachments are removed whole |
 | `Backspace` / `Delete` | Delete the character before / after the caret; **with a selection, delete the whole selection** |
 | Typing | **Replaces an active selection** (standard editor semantics), caret after the inserted text |
 
@@ -465,7 +465,8 @@ completes, and may reply with a summary toast.
 
 `/btw <question>` asks a quick side question without disturbing the main task: it reuses
 the current session context (system prompt + existing history) for a single **tool-less,
-one-turn** model call, and shows the answer in a scrollable panel.
+one-turn** model call, and shows the answer in a scrollable panel (the sidebar panel, or
+an overlay in the conversation).
 
 Notes:
 
@@ -481,6 +482,8 @@ Notes:
 - Clicking the **message area** (question or answer text) only hands the column focus to the panel, exactly like clicking anywhere else in it — it never injects anything; `s` is the only way in.
 - The `⤢` full-screen scene shares the sidebar's keys and selection state (both read the same thread store); the only difference is that after sending it steps aside and returns you to the main composer.
 - Triggering `/btw` again aborts the previous side question.
+- **Which surface shows the answer** follows whether the split can actually render: under `fullscreen` at a content width of ≥93 columns, with `sidePanel.splitEnabled` on, no fullscreen draft editor open, and the btw panel enabled, it goes to the sidebar panel; otherwise it falls back to an overlay in the conversation. One exchange never shows in two places; when the split comes back, the overlay only yields while the sidebar is actually showing the **btw** panel — a split parked on another panel leaves the overlay where it is. When another overlay or fullscreen view owns the screen, the question is still sent, but the only feedback is a notice (the fullscreen draft editor covers that notice).
+- An open side-question overlay yields to a main-task questionnaire or the fullscreen draft editor. Answering the questionnaire or collapsing the editor restores the side question according to the current layout, preserving the running side question and editor draft. While the questionnaire is visible, `Enter` answers it.
 
 ### Trajectory scene (/trace / Ctrl+T)
 
@@ -637,6 +640,7 @@ In inline mode, the terminal emulator owns native scrollback and selection.
 - **Double/triple click** — Select and copy a word/line (exception: the
   `scrollGutter: scrollbar` track is a drag target, so multi-clicks there no longer select a line).
 - **`Esc`** — Cancel an active drag (or an existing selection) without copying.
+- **Code blocks** — A body-anchored selection joins soft-wrapped rows without frame padding or extra newlines, for light and full frames. Hard line breaks and hard-line insets keep their existing screen-copy behavior; this is not a byte-for-byte source export.
 - **Single-click a message row** — Plain text rows (user/assistant) do nothing — the
   transcript is a reading surface, selection is the mouse's job there.
 - **Single-click a tool card / thinking / compact summary** — Expand / collapse (header

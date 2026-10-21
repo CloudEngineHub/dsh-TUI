@@ -1946,6 +1946,13 @@ const AC4_CUT_PRESET = 'Standard (Git Bash'
         await chat.send('\x17')
         check(`Z25[${mode}] Ctrl+W 不拆开图片 token`,
           await settled(() => !chat.screen().includes('Image #') && fixture.staged.size === 0 && fixture.discarded.length === 3), chat.screen())
+        for (const seq of ['\x1b\x7f', '\x1b[127;3u']) {
+          await paste()
+          const discarded = fixture.discarded.length
+          await chat.send(seq)
+          check(`Z25a[${mode}] Option+Backspace ${JSON.stringify(seq)} 整体删除图片并释放附件`,
+            await settled(() => !chat.screen().includes('Image #') && fixture.staged.size === 0 && fixture.discarded.length === discarded + 1), chat.screen())
+        }
         await chat.type('[Image #9]')
         await chat.send('\x7f')
         check(`Z26[${mode}] 没有附件绑定的字面 token 仍逐字编辑`,

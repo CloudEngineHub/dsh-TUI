@@ -206,13 +206,11 @@ function tokenize(
           // Two-character escape sequence
           i++
           emitSequence(data.slice(seqStart, i))
-        } else if (code === C0.CR || code === C0.LF) {
-          // Meta+Enter: ESC CR / ESC LF is how Option+Enter arrives from
-          // terminals without extended key reporting ("Use Option as Meta").
-          // CR/LF aren't ESC final bytes, but emitting the pair as a
-          // sequence lets the keypress parser recognize it — otherwise it
-          // merges with following text ('\x1b\rabc') and the CR submits
-          // the prompt instead of inserting a newline (#110).
+        } else if (code === C0.CR || code === C0.LF || code === C0.BS || code === C0.DEL) {
+          // Option-as-Meta prefixes Enter and Backspace with ESC. These
+          // controls are not ESC final bytes; keep each pair intact so it
+          // cannot become a bare Escape followed by an editing key (#110,
+          // #1448), including when stdin splits the pair across reads.
           i++
           emitSequence(data.slice(seqStart, i))
         } else if (code === C0.ESC) {

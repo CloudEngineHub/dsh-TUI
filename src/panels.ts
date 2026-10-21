@@ -5,6 +5,8 @@ export type {
   TuiPanelDescriptor,
   TuiPanelProps,
   TuiPanelCompactProps,
+  TuiPanelMarkdownProps,
+  TuiPanelCodeBlockProps,
   TuiPanelHostApi,
   TuiPanelSnapshot,
   TuiPanelKeyEvent,

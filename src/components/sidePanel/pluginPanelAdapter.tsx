@@ -18,6 +18,7 @@
 import React from 'react'
 import { Box, Text, Image, ScrollBox, useTheme, useAnimationFrame } from '../../ui.js'
 import { Divider } from '../design-system/Divider.js'
+import { PanelCodeBlock, PanelMarkdown } from './panelMarkdown.js'
 import { t, getLang } from '../../i18n.js'
 import { SidePanelRuntimeContext } from './SidePanelRuntimeContext.js'
 import { usePanelInput } from './usePanelInput.js'
@@ -142,13 +143,17 @@ export function makePluginPanelComponent(
     }), [channel, activity, attention, focused])
 
     // ── ui kit：useTerminalSize/useAnimationTime 绑定 Panel 尺寸，其余
-    // 直接复用宿主组件（类型在 TuiPanelUi 处收窄）。
+    // 直接复用宿主组件（类型在 TuiPanelUi 处收窄）；Markdown/CodeBlock 是
+    // panelMarkdown 里的收窄包装。新成员若依赖 host/focused，必须同步下面的
+    // 依赖数组，否则会读到陈旧闭包。
     const ui = React.useMemo<TuiPanelUi>(() => ({
       Box: Box as TuiPanelUi['Box'],
       Text: Text as TuiPanelUi['Text'],
       Image: Image as TuiPanelUi['Image'],
       ScrollBox: ScrollBox as TuiPanelUi['ScrollBox'],
       Divider: Divider as TuiPanelUi['Divider'],
+      Markdown: PanelMarkdown,
+      CodeBlock: PanelCodeBlock,
       useTerminalSize: () => ({ columns: width, rows: height }),
       useAnimationTime: (intervalMs: number | null) => useAnimationFrame(intervalMs)[1],
       useTheme: useTheme as TuiPanelUi['useTheme'],

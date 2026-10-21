@@ -744,7 +744,7 @@ function applyPaddingToText(
   return text
 }
 
-/** Re-apply a prepared decoration's noSelect runs at a new position. */
+/** Re-apply sorted, non-overlapping decoration runs at a new position. */
 function pushNoSelectRuns(
   output: Output,
   x: number,
@@ -754,8 +754,21 @@ function pushNoSelectRuns(
   if (runs === undefined) return
   const bx = Math.floor(x)
   const by = Math.floor(y)
-  for (const run of runs) {
+  // A long block can alternate hard/soft masks on every row. Cache hits
+  // must seek to the viewport instead of scanning all source rows.
+  let lo = 0
+  let hi = runs.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    const run = runs[mid]!
+    if (by + run.offset + run.height <= 0) lo = mid + 1
+    else hi = mid
+  }
+  for (let i = lo; i < runs.length; i++) {
+    const run = runs[i]!
+    if (by + run.offset >= output.height) break
     if (run.width <= 0 || run.height <= 0) continue
+    if (!output.isRectVisible(bx, by + run.offset, run.width, run.height)) continue
     output.noSelect({ x: bx, y: by + run.offset, width: run.width, height: run.height })
   }
 }
@@ -895,10 +908,11 @@ function paintDecoratedTextNode(
   if (prefixWidth > 0 && prefix !== undefined) {
     for (let r = headerOffset; r < rows.length; r++) {
       rows[r] = prefix.text + rows[r]!
-    }
-    const ns = prefix.noSelect ?? 0
-    if (ns > 0) {
-      noSelectRuns.push({ offset: headerOffset, height: rows.length - headerOffset, width: ns })
+      const ns = (flags[r] ? prefix.continuationNoSelect : undefined) ?? prefix.noSelect ?? 0
+      if (ns <= 0) continue
+      const last = noSelectRuns.at(-1)
+      if (last?.width === ns && last.offset + last.height === r) last.height++
+      else noSelectRuns.push({ offset: r, height: 1, width: ns })
     }
   } else if (decoration.hang === true) {
     // Continuation rows get their source line's leading structure: rails
@@ -1766,6 +1780,12 @@ function renderNodeToOutput(
         ) {
           node.stickyScroll = true
           node.onStickyRestore?.()
+        } else if (pending !== undefined && node.pendingScrollDelta === undefined) {
+          // Draining and boundary clamps mutate the handle after its input
+          // notification. Publish the settled position once, so virtual
+          // windows can tighten without relying on an unrelated React tick.
+          // A bottom re-pin already notified the same subscribers above.
+          node.onScrollDrainEnd?.()
         }
         scrollTop = clamped
 
@@ -1885,9 +1905,14 @@ function renderNodeToOutput(
             const { top, bottom, delta } = hint
             const w = Math.floor(width)
             output.blit(prevScreen, Math.floor(x), top, w, bottom - top + 1)
-            // Column-scoped: see the gate comment above. The terminal still
-            // scrolls whole rows; the diff repairs the flanks.
-            output.shift(top, bottom, delta, Math.floor(x), w)
+            // Full rows carry soft-wrap metadata with their cells. A narrow
+            // column leaves the flanks' row metadata live; the diff repairs
+            // those flanks after the terminal scrolls whole rows.
+            if (Math.floor(x) === 0 && w === output.width) {
+              output.shift(top, bottom, delta)
+            } else {
+              output.shift(top, bottom, delta, Math.floor(x), w)
+            }
             // Edge rows: new content entering the viewport.
             const edgeTop = delta > 0 ? bottom - delta + 1 : top
             const edgeBottom = delta > 0 ? bottom : top - delta - 1

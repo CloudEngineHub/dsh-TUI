@@ -774,6 +774,31 @@ for (const brand of ['claude', 'codex'] as const) {
   s2.close()
 }
 
+// Option-as-Meta editing reaches the controlled Launchpad query too (#1448).
+for (const columns of [120, 48]) {
+  for (const fullscreen of [false, true]) {
+    const ev: Ev[] = []
+    const s = await openLaunchpad(ev, { query: 'foo bar baz', columns, fullscreen })
+    const label = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}`
+    await s.send('\x1b\x7f')
+    check(`B11a ${label}: Option+Backspace removes only the last word`,
+      last(ev, 'query')?.value === 'foo bar ', JSON.stringify(ev))
+    await s.send('\x1b[127;3u')
+    check(`B11b ${label}: Kitty Option+Backspace uses the same boundary`,
+      last(ev, 'query')?.value === 'foo ', JSON.stringify(ev))
+    await s.send('bbb ccc')
+    for (const seq of ['\x1b[1;3D', 'X', '\x1bb', 'Z', '\x1bf', 'Q', '\x1b[1;5D', '\x1b[1;3D', 'Y']) {
+      await s.send(seq)
+    }
+    check(`B11c ${label}: Ctrl/Option arrows and ESC b/f move by word`,
+      last(ev, 'query')?.value === 'foo Ybbb ZXcccQ', JSON.stringify(ev))
+    check(`B11d ${label}: final query is rendered intact`,
+      await settled(() => s.screen().includes('foo Ybbb ZXcccQ')), s.screen())
+    console.log(`SCREEN Launchpad ${label}x${ROWS}\n${s.screen().trimEnd()}`)
+    s.close()
+  }
+}
+
 // ── B12+ 粘贴 ──
 {
   const ev: Ev[] = []

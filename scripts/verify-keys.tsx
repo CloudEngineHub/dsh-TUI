@@ -1,5 +1,6 @@
 /**
- * Regression tests for Option+Enter / Shift+Enter newline parsing (#110).
+ * Regression tests for Option+Enter / Shift+Enter and Option+Backspace
+ * parsing (#110, #1448).
  *
  * Covers three delivery shapes:
  *  1. exact  — the sequence arrives alone ('\x1b\r', CSI u, modifyOtherKeys)
@@ -132,6 +133,19 @@ check('modifyOtherKeys CSI 27;5;106~ is ctrl+j', new Feeder().feed('\x1b[27;5;10
   named('j', '\x1b[27;5;106~', { ctrl: true }),
 ])
 
+for (const sequence of ['\x1b\x7f', '\x1b\b', '\x1b[127;3u']) {
+  const key = named('backspace', sequence, { meta: true })
+  check(`${JSON.stringify(sequence)} is one meta+backspace`, new Feeder().feed(sequence), [key])
+  check(`${JSON.stringify(sequence)} keeps adjacent text ordered`, new Feeder().feed(`a${sequence}bc`), [
+    char('a'), key, text('bc'),
+  ])
+  const feeder = new Feeder()
+  check(`${JSON.stringify(sequence)} buffers its ESC prefix`, feeder.feed('\x1b'), [])
+  check(`${JSON.stringify(sequence)} completes across stdin reads`, feeder.feed(sequence.slice(1) + 'bc'), [
+    key, text('bc'),
+  ])
+}
+
 // --- 2. merged with following text ----------------------------------------
 
 check('ESC CR + text splits into meta+return then text', new Feeder().feed('\x1b\rabc'), [
@@ -194,6 +208,9 @@ check('bracketed paste preserves embedded controls', new Feeder().feed('\x1b[200
   const flushed = f.feed(null)
   check('flush of a lone ESC still yields Escape', flushed, [
     { kind: 'key', name: 'escape', shift: false, meta: false, ctrl: false, super: false, seq: '\x1b' },
+  ])
+  check('Backspace after an ESC timeout remains unmodified', f.feed('\x7f'), [
+    named('backspace', '\x7f'),
   ])
 }
 

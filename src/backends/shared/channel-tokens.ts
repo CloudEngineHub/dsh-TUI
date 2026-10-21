@@ -8,9 +8,10 @@
  *
  * This module is a direct, host-side file view of that store (a non-DSH
  * backend has no cordis context to resolve `ctx.get('credentials')` from).
- * Reads consult the active home's store and then the default `~/.dsh` store
- * (`credentialStoreFiles`), so a `DSH_HOME` override does not orphan a key the
- * user stored at the documented location; writes always target the active home.
+ * Channel refs belong to the active home's store. Other refs (provider
+ * env_key credentials) also consult the default `~/.dsh` store, so a
+ * `DSH_HOME` override does not orphan those keys. Writes and erases always
+ * target the active home.
  * The store is edited through a YAML document parser (`yaml`): the top-level
  * `refs` mapping is found in block or flow style, quoted keys included;
  * foreign fields, comments and multiline scalars keep their meaning, and a
@@ -62,10 +63,10 @@ const FILE = '.credentials.yaml'
  * `~/.dsh/.credentials.yaml`). */
 export function fileChannelTokens(home: string = dshHomeDir(), debug: (message: string) => void = () => undefined): ChannelTokenStore {
   const path = join(home, FILE)
-  // Writes stay in the active home; reads also consult the default `~/.dsh`
-  // store so a key stored at the documented location survives a DSH_HOME
-  // override (the codex bridge injects provider env keys from here).
+  // Only provider refs fall back: a removed channel must not inherit another
+  // home's old token. Keep read/declared aligned with write/erase ownership.
   const files = credentialStoreFiles(home)
+  const filesFor = (ref: string): readonly string[] => ref.startsWith('CHANNEL_') ? [path] : files
 
   /** Parse one store into a YAML document; undefined for a file that
    *  cannot be read or does not parse (never rebuilt over). An absent file
@@ -115,7 +116,7 @@ export function fileChannelTokens(home: string = dshHomeDir(), debug: (message: 
   }
   return {
     read: ref => {
-      for (const file of files) {
+      for (const file of filesFor(ref)) {
         const value = refsAt(file)?.get(ref)
         // Only a non-empty string scalar is a token; null/number/boolean
         // scalars are declared but not usable credential material.
@@ -151,7 +152,7 @@ export function fileChannelTokens(home: string = dshHomeDir(), debug: (message: 
       refs.delete(ref)
       commit(doc.toString({ lineWidth: 0 }))
     },
-    declared: ref => files.some(file => refsAt(file)?.has(ref) === true),
+    declared: ref => filesFor(ref).some(file => refsAt(file)?.has(ref) === true),
   }
 }
 

@@ -25,7 +25,7 @@
 import { Writable, PassThrough } from 'node:stream'
 import React from 'react'
 import { render, Text, ScrollBox } from '../lib/types/ui.js'
-import { settle, settled } from './lib/term-test.mjs'
+import { settle, settled, sleep } from './lib/term-test.mjs'
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -82,6 +82,7 @@ async function run() {
       frameLog.push({
         scrollTop: scrollHandle?.getScrollTop() ?? -1,
         scrollHeight: scrollHandle?.getScrollHeight() ?? -1,
+        pending: scrollHandle?.getPendingDelta() ?? 0,
       })
     },
   })
@@ -139,6 +140,60 @@ async function run() {
   instance.rerender(makeScroller(60))
   check('growth after a real shrink follows the reachable bottom', await settled(() =>
     frameLog.at(-1)?.scrollHeight === 60 && frameLog.at(-1)?.scrollTop === 36))
+
+  // No animated parent or streaming updates: after this one content update,
+  // only imperative scroll events may publish the settled geometry (#1207).
+  instance.rerender(makeScroller(500))
+  check('drain fixture has full content height', await settled(() =>
+    frameLog.at(-1)?.scrollHeight === 500))
+  const observed = []
+  const unsubscribe = scrollHandle.subscribe(() => observed.push({
+    top: scrollHandle.getScrollTop(),
+    pending: scrollHandle.getPendingDelta(),
+    sticky: scrollHandle.isSticky(),
+  }))
+  const landed = top => frameLog.at(-1)?.scrollTop === top &&
+    frameLog.at(-1)?.pending === 0 && observed.at(-1)?.top === top &&
+    observed.at(-1)?.pending === 0
+
+  scrollHandle.scrollTo(300)
+  check('manual drain starts from a published position', await settled(() => landed(300)))
+  observed.length = 0
+  const naturalFrames = frameLog.length
+  scrollHandle.scrollBy(-120)
+  check('natural drain publishes its final manual position', await settled(() => landed(180)), JSON.stringify(observed))
+  check('multi-frame drain does not notify per intermediate frame',
+    frameLog.slice(naturalFrames).filter(frame => frame.pending !== 0).length > 1 &&
+    observed.length <= 2, `notifications=${observed.length}`)
+  const idleNotifications = observed.length
+  await sleep(250) // 固定窗:探针 已排空后没有周期性补偿通知
+  check('idle scroll state emits no periodic notifications', observed.length === idleNotifications)
+
+  scrollHandle.scrollBy(-1000)
+  check('top clamp publishes the consumed remainder', await settled(() =>
+    landed(0) && observed.at(-1)?.sticky === false), JSON.stringify(observed.at(-1)))
+  scrollHandle.scrollBy(1000)
+  check('bottom clamp publishes the re-pinned final position', await settled(() =>
+    landed(476) && observed.at(-1)?.sticky === true), JSON.stringify(observed.at(-1)))
+
+  scrollHandle.scrollTo(200)
+  check('opposing input starts from a published position', await settled(() => landed(200)))
+  observed.length = 0
+  const cancelFrames = frameLog.length
+  scrollHandle.scrollBy(-80)
+  scrollHandle.scrollBy(80)
+  check('opposing inputs publish zero pending scroll', await settled(() =>
+    observed.length > 0 && landed(200)))
+  await sleep(250) // 固定窗:探针 抵消后的延迟帧不得滚动或形成通知循环
+  check('opposing inputs stay still without a notification loop',
+    frameLog.slice(cancelFrames).every(frame => frame.scrollTop === 200 && frame.pending === 0) &&
+    observed.length <= 2, `notifications=${observed.length}`)
+  unsubscribe()
+  const unsubscribedNotifications = observed.length
+  scrollHandle.scrollBy(60)
+  check('scrolling still drains after unsubscribe', await settled(() =>
+    frameLog.at(-1)?.scrollTop === 260 && frameLog.at(-1)?.pending === 0))
+  check('unsubscribed observer receives no scroll updates', observed.length === unsubscribedNotifications)
 
   instance.unmount()
   process.exit(failed)

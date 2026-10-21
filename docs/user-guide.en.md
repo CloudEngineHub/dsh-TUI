@@ -130,10 +130,10 @@ While a turn is running, the `/` overlay groups commands by their impact on the 
 | Key | Action |
 |---|---|
 | `←` / `→` | move the cursor by character (with a selection, collapse to that edge) |
-| `Ctrl+←` / `Ctrl+→` (⌘←/→) | jump by word |
+| `Ctrl+←` / `Ctrl+→` (⌘←/→) / `Alt/Option+←/→` | jump by whitespace-delimited words; also supported on the launchpad |
 | `Home` / `End`, `Ctrl+E` | logical line start / end (`Ctrl+A` now opens the subagent panel, see §2.7) |
 | `Ctrl+U` / `Ctrl+K` | delete before the cursor (to line start) / after the cursor (to line end) |
-| `Ctrl+W` | delete the previous word |
+| `Ctrl+W` / `Alt/Option+Backspace` | delete the previous word; staged image attachments are removed whole |
 | `Ctrl+Z` | undo the draft's last word-level edit (caret and images included); draft-only — a submit or a history recall (`Ctrl+R`/`↑`) ends it, and it is unrelated to the `Esc Esc` conversation/message rewind; remappable via `/settings` |
 | `Backspace` / `Delete` | delete previous / next character; **with a selection, delete the whole selection** |
 | `↑` / `↓` | move between lines when multi-line; browse input history when single-line (scoped per project, last 200 entries each, kept across restarts; history from before the upgrade shows in every project) |
@@ -144,8 +144,8 @@ While a turn is running, the `/` overlay groups commands by their impact on the 
 | `/vim` | **vim editing mode toggle** (per-session, not persisted): shows an `INSERT` badge, `Esc` to `NORMAL`, `i/I/a/A/o/O` back to INSERT. NORMAL keys below |
 | typing | **replaces the whole selection when one exists** (like a standard editor), cursor lands after the inserted text |
 | right-click / `Ctrl+Shift+V` | terminal-native paste (newlines inserted as-is) |
-| `Esc` (input) | closes layer by layer: help → **image preview** → command menu → file menu (only the current `@` token) → **clear selection if any (text stays)** → re-send interrupt → clear input → double-press = time-travel |
-| double-press `Esc` (empty input) | **time-travel rewind** (press twice within 3 s) |
+| `Esc` (input) | closes layer by layer: help → **image preview** → command menu → file menu (only the current `@` token) → leave the held-queue selector → **clear selection if any (text stays)** → collapse the draft editor → unfold a pasted block → remove context chips → interrupt and hold queued messages (ordinary draft kept; no automatic re-send) → clear non-empty idle input → double-press on empty idle input = time-travel |
+| double-press `Esc` (empty idle input) | **time-travel rewind** (press twice within 3 s) |
 
 **vim NORMAL keys**: move `h/l` `j/k` `0/^/$` `w/b`;
 delete `x/X` `dd`/`d$`/`d0`/`d^`/`dw`; `u` undo, `Enter` send.
@@ -341,7 +341,7 @@ The command menu = built-in commands (aliases included) + DSH registry commands 
 | `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching just **parks** the outgoing session — it keeps running in the background and the active turn is not interrupted (like `/tree`: neither browsing nor switching cuts a running turn short; on the Claude backend a mid-turn switch is refused instead) |
 | `/home` / `/agentview` / `/bg` | none | the same session manager (`/home`=workspace view · `/agentview`=hosted session state · `/bg`=send to background and open, alias `/background`) |
 | `/tree` | none | session fork tree: hover to preview, click to rewind / fork / switch branch |
-| `/fork` | none | copy the current session into a resumable clone (original unaffected) |
+| `/fork` | none | copy the current session into a resumable clone (original unaffected); a DSH copy with history records its source and belongs to the same session family |
 | `/restart` | none | restart the process and resume this session. Allowed mid-turn too: the running turn is interrupted and queued input is not kept; if a tool ignores the interrupt and the process cannot shut down cleanly, it exits after ~5 s and prints the command that resumes this session |
 | `/kernel` | none | kernel picker: switch between DSH, Codex and the experimental Claude backend; remembers the pick and restarts into a new session (rejected mid-turn); see [Claude backend](claude-backend.en.md) |
 | `/dsh` / `/codex` / `/claude` | none | directly choose the named kernel through the same checks and restart flow as `/kernel`; the current kernel does not restart, a running turn blocks switching, and missing Claude opens the install wizard |

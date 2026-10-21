@@ -268,7 +268,7 @@ export function StatusLine({
   activity?: ActivityLineValue
   /**
    * The session projected onto the status line's few columns, plus the
-   * animation tick and the self-retiring key hint.
+   * self-retiring key hint. The mounted MiniWake owns its animation clock.
    *
    * A strip that shows the session's shape keeps earning its space in a way a
    * static label cannot, and it carries the failure signal in position rather
@@ -278,7 +278,6 @@ export function StatusLine({
   wake?: {
     band: WaveBand
     hint?: string
-    tick: number
     /** Click target for the strip: opens the trajectory scene. */
     onOpen?: () => void
     /** Chord revealed while the pointer rests on the strip. */
@@ -812,7 +811,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
             {showActivity ? trailer : null}
           </Box>
           {showTrajectory && wake !== undefined ? (
-            <MiniWake band={wake.band} hint={wake.hint} tick={wake.tick} onOpen={wake.onOpen} hoverHint={wake.hoverHint} />
+            <MiniWake band={wake.band} hint={wake.hint} working={channel.working} onOpen={wake.onOpen} hoverHint={wake.hoverHint} />
           ) : null}
         </Box> : null}
       </Box>

@@ -203,6 +203,8 @@ const GROUPS = {
 // （实测 ~73 LF/s）。静置窗口内 stdout 不得出现 LF、回滚缓冲不得增长，同时
 // 鲸鱼闲置动画必须仍在重绘（不许靠冻结界面取巧）。
     ["verify-idle-repaint", ['node', '--import', 'tsx/esm', 'scripts/verify-idle-repaint.tsx']],
+// Long histories stay untouched by title, mini-wake and session-row animation frames (#1207).
+    ['verify-animation-ownership', ['node', '--import', 'tsx/esm', 'scripts/verify-animation-ownership.tsx']],
 // 开屏头部契约：大字 5 行高且等宽（8×7 = 7×8）、bigTextWidth 与实际画出的列数
 // 一致；窄终端按「鲸鱼+大字 → 纯大字 → 纯鲸鱼 → 纯文字」逐档降级，档位无空档。
     ["verify-splash-layout", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-layout.ts']],
@@ -436,6 +438,8 @@ const GROUPS = {
 // 直达启动器回归（issue #108）：参数透传、残骸 profile 重装、
 // 版本不一致提示、双语消息、shellQuote 转义规则。
     ["verify-launcher", ['node', 'scripts/verify-launcher.mjs']],
+// 包入口与启动器不继承工作区的 React 开发模式；专用调试开关仍可启用。
+    ['verify-production-react', ['node', 'scripts/verify-production-react.mjs']],
 // 本包入口的路由：内核判定排序、profile 补丁的 backend 钉、重启 argv、宿主 dsh 查找。
     ["verify-host-entry", ['node', '--import', 'tsx/esm', 'scripts/verify-host-entry.ts']],
 // 第三方插件的身份准入：真 Cordis 组合上驱动 armAdmissionLoader，面板带 manifest id；
@@ -1257,7 +1261,11 @@ const GROUPS = {
     ["verify-session-tree", ['node', '--import', 'tsx/esm', 'scripts/verify-session-tree.tsx']],
 // /model 保留压缩；fork/rewind 在快照前取消压缩。落盘失败须与通用失败区分。
     ["verify-compact-switch", ['node', '--import', 'tsx/esm', 'scripts/verify-compact-switch.tsx']],
+// /resume 的预检抛错归还 reservation；转交后的 pin 保留到恢复事务结束。
+    ["verify-resume-reservation", ['node', '--import', 'tsx/esm', 'scripts/verify-resume-reservation.ts']],
     ["verify-live-session", ['node', '--import', 'tsx/esm', 'scripts/verify-live-session.ts']],
+// /fork 的继承 delivery marker 必须能经真实 V4 冷读和嵌套恢复校验。
+    ["verify-fork-resume", ['node', '--import', 'tsx/esm', 'scripts/verify-fork-resume.ts']],
 // /model 保留会话与自动标题资格；路由及其异步快照跟随停放中的 agent。
     ["verify-session-title-lineage", ['node', '--import', 'tsx/esm', 'scripts/verify-session-title-lineage.ts']],
     ["verify-model-route-lifetime", ['node', '--import', 'tsx/esm', 'scripts/verify-model-route-lifetime.ts']],

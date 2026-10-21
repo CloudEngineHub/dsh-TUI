@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regression: Ctrl+Left/Right word jump in PromptInput (#156, #158).
+ * Regression: Ctrl/Option word editing in PromptInput (#156, #158, #1448).
  *
  * Windows Terminal (and most xterm-family terminals) deliver Ctrl+Left as
  * ESC[1;5D — parsed to { name: 'left', ctrl: true } (parse-keypress.ts) and
@@ -25,16 +25,14 @@
  * char and the markers land in different places, so the submitted value
  * differs. A word-jump-on-bare-arrow regression likewise moves marker Z.
  *
- * Plus a static invariant (verify-cordis-approval style): in the source the
- * isMod arrow arms must textually precede the bare arrow arms.
+ * Option-as-Meta arrows, ESC b/f and all three Option+Backspace encodings
+ * must reach the same whitespace-delimited editing path, including a text
+ * and Option+Backspace pair delivered in one stdin batch.
  *
  * Run with plain node against the compiled lib:
  *   node scripts/verify-word-jump.mjs
  * Exits 1 on any failed assertion (CI gate).
  */
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Writable, PassThrough } from 'node:stream'
 // Redirect HOME/USERPROFILE into a throwaway sandbox before the app modules
 // load: this fixture submits text, and `rememberHistory` persists it into
@@ -43,9 +41,8 @@ import { Writable, PassThrough } from 'node:stream'
 // cap) evict their real entries.
 import './lib/fake-home.mjs'
 import React from 'react'
-import { settled, sleep } from './lib/term-test.mjs'
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+import xterm from '@xterm/headless'
+import { settle, settled, sleep, viewportLines } from './lib/term-test.mjs'
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -53,12 +50,16 @@ function check(name, ok, extra = '') {
   if (!ok) failed += 1
 }
 
-const { render } = await import('../lib/types/ui.js')
+const { render, AlternateScreen } = await import('../lib/types/ui.js')
 const { PromptInput } = await import('../lib/types/components/PromptInput.js')
+const columns = Number(process.env.DSH_TEST_COLUMNS ?? 100)
+const fullscreen = process.env.DSH_TEST_FULLSCREEN === '1'
+const terminal = new xterm.Terminal({ cols: columns, rows: 30, allowProposedApi: true })
+const screen = () => viewportLines(terminal).join('\n')
 
 function makeStreams() {
-  const stdout = new Writable({ write(_c, _e, cb) { cb() } })
-  stdout.columns = 100
+  const stdout = new Writable({ write(chunk, _e, cb) { terminal.write(String(chunk), cb) } })
+  stdout.columns = columns
   stdout.rows = 30
   stdout.isTTY = true
   const stderr = new Writable({ write(_c, _e, cb) { cb() } })
@@ -92,23 +93,22 @@ const channel = {
 }
 
 const { stdout, stderr, stdin } = makeStreams()
+const prompt = React.createElement(PromptInput, {
+  channel,
+  helpOpen: false,
+  onToggleHelp() {},
+  onRunCommand: () => false,
+  selectionActive: false,
+})
 const instance = await render(
-  React.createElement(PromptInput, {
-    channel,
-    helpOpen: false,
-    onToggleHelp() {},
-    onRunCommand: () => false,
-    selectionActive: false,
-  }),
+  fullscreen ? React.createElement(AlternateScreen, null, prompt) : prompt,
   { stdout, stderr, stdin, exitOnCtrlC: false, patchConsole: false },
 )
-// 固定窗:pacing 等首帧——React 树首次渲染与输入监听挂接无单一可观测条件。
-await sleep(600)
+await settle(() => screen().includes('❯'))
 
 const feed = async seq => {
   stdin.write(seq)
-  // 固定窗:pacing 按键步间——每步移动/插入后的光标位置对外不可观测
-  // （stdout 被丢弃），只有最终 submit 可断言。
+  // 固定窗:pacing 按键步间——单次移动的语义用下一次插入后的提交值断言。
   await sleep(250)
 }
 
@@ -129,16 +129,35 @@ check(
   JSON.stringify(submitted),
 )
 
-instance.unmount()
+// Submit resets the draft. Each deletion case starts with a fresh line so
+// accidentally dispatching Esc cannot be hidden by the previous case.
+for (const seq of ['\x1b\x7f', '\x1b\b', '\x1b[127;3u']) {
+  await settle(() => !screen().includes(submitted.at(-1)))
+  await feed(`foo bar baz${seq}`)
+  await feed(seq)
+  await feed('Q')
+  const before = submitted.length
+  stdin.write('\r')
+  check(`Option+Backspace ${JSON.stringify(seq)} deletes words without clearing the draft`,
+    await settled(() => submitted.length === before + 1 && submitted.at(-1) === 'foo Q'),
+    JSON.stringify(submitted.at(-1)))
+}
 
-// ── static invariant: isMod arrow arms precede bare arrow arms ─────────────
-const source = readFileSync(join(root, 'src/components/PromptInput.tsx'), 'utf8')
-const modLeft = source.indexOf('if (isMod(key) && key.leftArrow)')
-const bareLeft = source.indexOf('if (key.leftArrow)')
-const modRight = source.indexOf('if (isMod(key) && key.rightArrow)')
-const bareRight = source.indexOf('if (key.rightArrow)')
-check('source: isMod+left arm exists and precedes bare left arm', modLeft !== -1 && bareLeft !== -1 && modLeft < bareLeft)
-check('source: isMod+right arm exists and precedes bare right arm', modRight !== -1 && bareRight !== -1 && modRight < bareRight)
+await settle(() => !screen().includes(submitted.at(-1)))
+for (const seq of ['aaa bbb ccc', '\x1b[1;3D', 'X', '\x1bb', 'Z', '\x1bf', 'Q', '\x1b[1;3D', '\x1b[1;3D', 'Y']) {
+  await feed(seq)
+}
+check('Option arrows and ESC b/f share the word boundaries',
+  await settled(() => screen().includes('aaa Ybbb ZXcccQ')), screen())
+console.log(`SCREEN composer ${fullscreen ? 'fullscreen' : 'inline'} ${columns}x30\n${screen().trimEnd()}`)
+const before = submitted.length
+stdin.write('\r')
+check('Option word jumps submit the expected unmodified text',
+  await settled(() => submitted.length === before + 1 && submitted.at(-1) === 'aaa Ybbb ZXcccQ'),
+  JSON.stringify(submitted.at(-1)))
+
+instance.unmount()
+terminal.dispose()
 
 if (failed > 0) {
   console.error(`verify-word-jump: ${failed} assertion(s) failed`)

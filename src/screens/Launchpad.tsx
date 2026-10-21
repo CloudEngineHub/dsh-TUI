@@ -21,6 +21,7 @@ import { t } from '../i18n.js'
 import { isMinimalUiMode } from '../minimalUiMode.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { isMod, isPlainReturn } from '../utils/modifiers.js'
+import { wordBoundaryLeft, wordBoundaryRight } from '../utils/inputWordBoundary.js'
 import { actionMatches } from '../utils/keymap.js'
 import { formatClipboardInsert, readClipboard, type ClipboardRead } from '../utils/clipboard.js'
 import { imagePathMediaType, parsePastedImagePath, readBoundedRegularFile, stageClipboardFilePaths } from '../utils/pastedImagePath.js'
@@ -1056,15 +1057,16 @@ export function Launchpad({
     if (key.leftArrow || key.rightArrow || key.home || key.end) {
       if (!inputFocused) return
       const at = caret
+      const byWord = isMod(key) || key.meta
       const next = key.home ? 0
         : key.end ? query.length
-          : key.leftArrow ? Math.max(0, prevBoundary(query, at))
-            : Math.min(query.length, nextBoundary(query, at))
+          : key.leftArrow ? byWord ? wordBoundaryLeft(query, at) : Math.max(0, prevBoundary(query, at))
+            : byWord ? wordBoundaryRight(query, at) : Math.min(query.length, nextBoundary(query, at))
       changeQuery(query, next)
       event.stopImmediatePropagation()
       return
     }
-    if (key.backspace || key.delete) {
+    if ((key.backspace && !key.meta) || key.delete) {
       if (!inputFocused) return
       const at = caret
       if (key.backspace) {
@@ -1077,12 +1079,9 @@ export function Launchpad({
       event.stopImmediatePropagation()
       return
     }
-    if (isMod(key) && input === 'w') {
+    if ((isMod(key) && input === 'w') || (key.meta && key.backspace)) {
       if (!inputFocused) return
-      let start = caret
-      while (start > 0 && /\s/u.test(query[start - 1]!)) start--
-      while (start > 0 && !/\s/u.test(query[start - 1]!)) start--
-      deleteRange(start, caret)
+      deleteRange(wordBoundaryLeft(query, caret), caret)
       event.stopImmediatePropagation()
       return
     }

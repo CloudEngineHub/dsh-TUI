@@ -159,7 +159,7 @@ try {
       DSH_HOME: dshHome,
       DSH_TUI_SESSION_ROOT: sessionRoot,
       DSH_TUI_WORKSPACE_TARGET: workspaceTarget,
-      NODE_ENV: 'production',
+      NODE_ENV: process.env.DSH_TUI_REACT_DEV === '1' ? 'development' : 'production',
     },
   })
   child.on('error', error => {

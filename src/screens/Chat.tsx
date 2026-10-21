@@ -57,7 +57,7 @@ import { ExtensionDialog } from '../components/ExtensionDialog.js'
 import { consumeBoundaryRecoveryRemount } from '../ink/update-overflow-guard.js'
 import type { DOMElement } from '../ink/dom.js'
 import { useSearchHighlight } from '../ink/hooks/use-search-highlight.js'
-import { useTerminalTitle } from '../ink/hooks/use-terminal-title.js'
+import { ChatTitle } from '../components/ChatTitle.js'
 import { useTerminalFocus } from '../ink/hooks/use-terminal-focus.js'
 import { useProgramStatus, type ProgramBlockedPrompt } from '../ink/hooks/use-program-status.js'
 import { supportsProgramStatus } from '../ink/termio/osc7501.js'
@@ -163,7 +163,6 @@ import { statSync } from 'node:fs'
 import { setClipboard } from '../ink/termio/osc.js'
 import { TerminalWriteContext } from '../ink/useTerminalNotification.js'
 import instances from '../ink/instances.js'
-import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
 import { useExternalVersion } from '../hooks/useExternalVersion.js'
 import { TrajectoryScene } from './TrajectoryScene.js'
 import { markHomeSeen } from '../homePrefs.js'
@@ -345,9 +344,6 @@ function contextOccupancyLine(channel: Channel): string | undefined {
     window: formatTokens(occupancy.contextWindow),
   })
 }
-
-/** Terminal-title spinner frames. */
-const TITLE_SPINNER_FRAMES = ['⠂', '⠐']
 
 /** Searchable transcript text for one row (`/` incsearch):
  *  user text, assistant text, thinking, tool args/results, local output). */
@@ -1468,10 +1464,11 @@ export function Chat({
    *  a row they are no longer looking at). */
   const rewindRequestRef = React.useRef(0)
   /** /btw side-question thread: pure UI state in btwThreads — the answers
-   *  never enter the transcript or the session log. The floating overlay is
-   *  only the FALLBACK surface (btw panel not enabled); with the panel
-   *  enabled the same thread routes to the sidebar instead — one answer,
-   *  exactly one surface. */
+   *  never enter the transcript or the session log. Two surfaces, one owner:
+   *  the sidebar panel when the split can render AND is showing the btw
+   *  panel, otherwise the floating overlay in the conversation. This flag
+   *  records that the fallback is wanted; `btwOverlayVisible` decides whether
+   *  it actually owns the screen. */
   const [btwOverlayOpen, setBtwOverlayOpen] = React.useState(false)
   /** ⤢ fullscreen thread scene (openPanelFullscreen 'btw' route). */
   const [btwSceneOpen, setBtwSceneOpen] = React.useState(false)
@@ -2365,11 +2362,6 @@ export function Chat({
   loadingStartTimeRef.current = channel.turnStart
   const thinkingStatus = useThinkingStatus(channel.spinnerMode === 'thinking')
 
-  // Terminal tab title: the session
-  // title when set, else "dsh-TUI"; a `⠂/⠐` spinner prefix while a turn is
-  // working (960ms cadence, only while the terminal is focused), a static
-  // `✦` otherwise. dsh-TUI brands the idle prefix with the DeepSeek whale.
-  const [titleFrame, setTitleFrame] = React.useState(0)
   const terminalFocused = useTerminalFocus()
   // Gate the stream this app renders to; embedders may replace process.stdout.
   const { stdout: appStdout } = useApp()
@@ -2430,19 +2422,40 @@ export function Chat({
     hasSelection: hasMouseSelection,
     getState: getMouseSelectionState,
   } = useSelection()
-  React.useEffect(() => {
-    if (!channel.working || !terminalFocused) return
-    const interval = setInterval(() => {
-      setTitleFrame(f => (f + 1) % TITLE_SPINNER_FRAMES.length)
-    }, 960)
-    return () =>{  clearInterval(interval) }
-  }, [channel.working, terminalFocused])
-  const titlePrefix = channel.working
-    ? (TITLE_SPINNER_FRAMES[titleFrame] ?? '✦')
-    : '✦'
-  useTerminalTitle(
-    `${titlePrefix} 🐋 ${channel.sessionTitle}`,
-  )
+
+  // OSC 7501 program status: tell the terminal (and any agentic inbox) whether
+  // this session is working, parked on the user, or finished. Precedence
+  // matches the UI's own: a parked ask outranks a running turn. The pending
+  // prompt is reduced to the one-line message the protocol carries.
+  const programStatusBlocked = React.useMemo<ProgramBlockedPrompt | null>(() => {
+    if (approvalSnapshot !== null) {
+      const detail = approvalSnapshot.command ?? approvalSnapshot.reason ?? approvalSnapshot.title
+      return {
+        kind: 'permission',
+        message: t('program-status-approval', {
+          tool: detail === undefined
+            ? approvalSnapshot.toolName
+            : `${approvalSnapshot.toolName} · ${detail}`,
+        }),
+      }
+    }
+    if (dialogSnapshot !== null) {
+      return { kind: 'question', message: t('program-status-dialog', { title: dialogSnapshot.title }) }
+    }
+    if (questionSnapshot !== null) {
+      const { header, question, purpose } = questionSnapshot.question
+      return { kind: purpose === 'auth' ? 'auth' : 'question', message: t('program-status-question', { question: header ?? question }) }
+    }
+    return null
+  }, [approvalSnapshot, dialogSnapshot, questionSnapshot, lang])
+  // The hook reads the channel's own projected fields (`working`,
+  // `turnOutcome` from `turn.end.reason`, the title and the session id), so
+  // the usage ledger's stale outcome can never stand in for the turn's close.
+  useProgramStatus({
+    channel,
+    blocked: programStatusBlocked,
+    enabled: programStatusEnabled,
+  })
 
   // OSC 7501 program status: tell the terminal (and any agentic inbox) whether
   // this session is working, parked on the user, or finished. Precedence
@@ -4295,9 +4308,12 @@ export function Chat({
       }
       case 'btw': {
         // `/btw`：单轮无工具侧问，线程只在内存里（btwThreads，按会话
-        // 隔离），不打断主回合、不写会话历史。空参数只提示用法。启用了
-        // btw 面板就进面板线程（有模态界面时不抢开，只标未读）；没启用
-        // 就用浮层。同一个问答只出现在一处。
+        // 隔离），不打断主回合、不写会话历史。空参数只提示用法。分栏
+        // 渲染得出来才进面板线程；否则退浮层——面板「已启用」只是配置，
+        // 不代表分栏真的上屏（窄屏 / inline / 编辑器展开 /
+        // splitEnabled=false 都会把它掩掉，issue #1631）。屏被别的浮层或
+        // 整屏界面占着时两个表面都不抢开，只发通知。同一个问答只出现在
+        // 一处。
         setHelpOpen(false)
         const question = rawInput.trim()
         if (!question) {
@@ -4309,10 +4325,15 @@ export function Chat({
           channel.notify(t('btw-thread-busy'), { color: 'warning', timeoutMs: 3000 })
           return true
         }
-        if (sidePanel.enabledPanelIds.includes('btw')) {
-          if (btwSurfaceFree()) sidePanel.openPanel('btw')
+        const btwPanelEnabled = sidePanel.enabledPanelIds.includes('btw')
+        if (btwSurfaceFree()) {
+          if (btwPanelEnabled && sidePanel.splitAvailable) sidePanel.openPanel('btw')
+          else setBtwOverlayOpen(true)
         } else {
-          setBtwOverlayOpen(true)
+          // 屏被别的浮层/整屏界面占着：侧问照常发出，但只在通知通道里说一
+          // 句——既不把答案静默塞进看不见的地方，也不挂一个既看不见、又
+          // 会先吃掉按键的浮层。
+          channel.notify(t('btw-surface-busy'), { color: 'warning', timeoutMs: 4000 })
         }
         return true
       }
@@ -4471,6 +4492,25 @@ export function Chat({
     editorOpen: promptEditorOpen,
   })
   /**
+   * 「面板上屏」不等于「分栏在渲染」：分栏画出的是 activePanelId 那一块，
+   * 而活动面板默认是启用列表第一项。浮层只在侧栏真的显示 btw 线程时让位；
+   * 侧栏停在别的面板上时把浮层卸掉，等于让用户什么都看不到（issue #1631
+   * 的同一条静默路径）。
+   */
+  const btwPanelOnScreen =
+    sidePanel.enabledPanelIds.includes('btw') && sidePanel.split && sidePanel.activePanelId === 'btw'
+  /**
+   * 浮层是否真的占着屏幕（因而可以接管输入）。渲染门与所有「让位 / 暂停
+   * 输入」的判定都读这一个值：`btwOverlayOpen` 只是「想要浮层」，分栏重新
+   * 出现后它可能为真却什么都不画——那时不能再让 PromptInput 与 Chat 的按键
+   * 处理器让位（否则 composer 消失、Esc/Ctrl+C 都失效）。
+   */
+  // 编辑器展开会收起分栏；此时不能复活浮层并暂停 PromptInput，否则编辑器
+  // 发布/撤下与分栏恢复会循环触发。主任务问卷也先接管显示和键盘，结束后
+  // 再恢复浮层请求，保留在途侧问。
+  const btwOverlayVisible = btwOverlayOpen && !btwPanelOnScreen
+    && !promptEditorOpen && questionSnapshot === null
+  /**
    * 「全屏」出口（PanelBar 的 ⤢）：把侧栏里那个面板的内容切到它原本的整屏
    * 形态。只映射**真的有整屏对应物**的面板 id（能力位 capabilities.fullscreen
    * 决定按钮画不画，这里决定点了去哪）；没映射到的 id 静默无操作——按钮与
@@ -4540,7 +4580,6 @@ export function Chat({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
     [trajectory.nodes, trajectory.counts.rows, wakeWidth],
   )
-  const [wakeTickRef, wakeTime] = useAnimationFrame(channel.working ? 120 : null)
   /**
    * The key hint beside the strip retires itself once the trajectory has been
    * opened — teaching belongs in the first minute, not on every frame forever.
@@ -4682,7 +4721,7 @@ export function Chat({
   const lastModalEnterAtRef = React.useRef(0)
   const couponVisible = coupon !== null && starModal === null
     && approvalSnapshot === null && dialogSnapshot === null && questionSnapshot === null
-    && overlay.kind === 'none' && !btwOverlayOpen && recap === null
+    && overlay.kind === 'none' && !btwOverlayVisible && recap === null
     && !supervisorOpen && !treeOpen && !settingsOpen && !jobsPanelOpen
     && !sceneOpen && !subagentDashboardOpen && subagentDetailId === null
     && !btwSceneOpen
@@ -4737,7 +4776,7 @@ export function Chat({
     // suspended to preserve async command drafts, making this guard also
     // essential for Ctrl+C: it must never clear the hidden composer.
     if (
-      btwOverlayOpen
+      btwOverlayVisible
       || overlay.kind === 'tips'
       || (recap !== null && (!recap.auto || recap.expanded))
     ) return
@@ -5639,8 +5678,9 @@ export function Chat({
         setSelectedId(null)
       }
     } else if (key.escape && promptControllerRef.current?.consumeEscape()) {
-      // Selection/editor Esc stays with the composer even though Chat's
-      // global listener runs first. Consume it before interrupting the turn.
+      // Local menu/preview/selection/editor Esc stays with the composer even
+      // though Chat's global listener runs first. Only an unconsumed Esc
+      // reaches the working-turn interrupt below.
       event.stopImmediatePropagation()
     } else if (key.escape && channel.working && !helpOpen && !promptControllerRef.current?.vimActive()) {
       // Esc interrupts a running turn (the prompt input
@@ -6335,7 +6375,14 @@ export function Chat({
           {overlay.kind === 'search' && <TranscriptSearch query={searchQuery} cursorOffset={searchCursor} count={searchCount} current={searchCurrent} />}
     </>
   )
-    const screenOpen = channel.pluginScene !== undefined || supervisorOpen || settingsOpen
+  // Every scene retains the title, while its frame state stays in a null leaf.
+  const withTitle = (content: React.ReactNode): React.ReactNode => (
+    <>
+      <ChatTitle title={channel.sessionTitle} working={channel.working} focused={terminalFocused} />
+      {content}
+    </>
+  )
+  const screenOpen = channel.pluginScene !== undefined || supervisorOpen || settingsOpen
     || subagentDetailId !== null || subagentDashboardOpen || sceneOpen
     || agentView !== null
     || launchpadShown || onboardingOpen
@@ -6345,7 +6392,7 @@ export function Chat({
         {interruptPanel}
       </Box>
     )
-    return fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>
+    return withTitle(fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>)
   }
 
   // A plugin scene (dsh-tui-scenes) takes the whole terminal the same way
@@ -6374,7 +6421,7 @@ export function Chat({
         {renderScene ? renderScene(pluginScene.id, channel) : <Text>Scene unavailable: {pluginScene.id}</Text>}
       </PluginSceneBoundary>
     )
-    return fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>
+    return withTitle(fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>)
   }
 
   /**
@@ -6405,7 +6452,7 @@ export function Chat({
         }}
       />
     )
-    return fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>
+    return withTitle(fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>)
   }
 
 
@@ -6495,7 +6542,7 @@ export function Chat({
     )
     // Inline hosts enter the alternate screen for the duration; full-screen
     // hosts are already in it and must not nest a second one.
-    return fullscreen ? supervisorScene : <AlternateScreen>{supervisorScene}</AlternateScreen>
+    return withTitle(fullscreen ? supervisorScene : <AlternateScreen>{supervisorScene}</AlternateScreen>)
   }
 
   // The session tree follows the browser's rule exactly: it REPLACES the
@@ -6517,7 +6564,7 @@ export function Chat({
         }}
       />
     )
-    return fullscreen ? tree : <AlternateScreen>{tree}</AlternateScreen>
+    return withTitle(fullscreen ? tree : <AlternateScreen>{tree}</AlternateScreen>)
   }
 
   // The settings screen follows the browser's rule exactly: it REPLACES the
@@ -6525,7 +6572,7 @@ export function Chat({
   // is no transcript underneath to be repainted or bled through.
   if (settingsOpen && launchpadGate()) {
     const screen = <Settings channel={channel} onClose={() => setSettingsOpen(false)} statusFields={statusFields} />
-    return fullscreen ? screen : <AlternateScreen>{screen}</AlternateScreen>
+    return withTitle(fullscreen ? screen : <AlternateScreen>{screen}</AlternateScreen>)
   }
 
   // Main-screen read-only Agent View: a scene over the mounted Chat, with no
@@ -6559,7 +6606,7 @@ export function Chat({
         onSwitchAgent={switchViewedAgent}
       />
     )
-    return fullscreen ? viewScene : <AlternateScreen>{viewScene}</AlternateScreen>
+    return withTitle(fullscreen ? viewScene : <AlternateScreen>{viewScene}</AlternateScreen>)
   }
 
   // Subagent detail scene: displays detailed view of a specific subagent.
@@ -6589,7 +6636,7 @@ export function Chat({
         }}
       />
     )
-    return fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>
+    return withTitle(fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>)
   }
 
   // Jobs panel: background jobs (running/killed) with kill/inspect actions.
@@ -6610,7 +6657,7 @@ export function Chat({
         }}
       />
     )
-    return fullscreen ? panel : <AlternateScreen>{panel}</AlternateScreen>
+    return withTitle(fullscreen ? panel : <AlternateScreen>{panel}</AlternateScreen>)
   }
 
   // ⤢ btw thread scene (openPanelFullscreen 'btw'): the whole-terminal form
@@ -6626,7 +6673,7 @@ export function Chat({
         onFocusChat={sidePanel.focusChat}
       />
     )
-    return fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>
+    return withTitle(fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>)
   }
 
   // Subagent dashboard: displays all active and completed subagents.
@@ -6648,14 +6695,14 @@ export function Chat({
         onClose={() => setSubagentDashboardOpen(false)}
       />
     )
-    return fullscreen ? dashboard : <AlternateScreen>{dashboard}</AlternateScreen>
+    return withTitle(fullscreen ? dashboard : <AlternateScreen>{dashboard}</AlternateScreen>)
   }
 
   /** Prompt input is inert while a modal dialog owns the keyboard. The
    *  overlay union covers every picker/dialog and /tips in one check;
    *  message-selection mode and the /btw panel live outside it. */
   const promptSelectionActive =
-    selectionActive || overlay.kind !== 'none' || btwOverlayOpen
+    selectionActive || overlay.kind !== 'none' || btwOverlayVisible
 
   // These panels replace the visible composer, but PromptInput remains
   // mounted (suspended) so an async registry command cannot lose its exact
@@ -6665,7 +6712,7 @@ export function Chat({
     || dialogSnapshot !== null
     || overlay.kind === 'tips'
     || (recap !== null && (!recap.auto || recap.expanded))
-    || btwOverlayOpen
+    || btwOverlayVisible
     || questionPanelNode !== null
     || starModal !== null
     || couponVisible
@@ -6680,7 +6727,7 @@ export function Chat({
   // whole app back to the main screen.
   if (sceneOpen && launchpadGate()) {
     const scene = <TrajectoryScene channel={channel} build={trajectory} onClose={closeScene} />
-    return fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>
+    return withTitle(fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>)
   }
 
   /**
@@ -6864,7 +6911,7 @@ export function Chat({
         <TooltipLayer invalidationKey={overlay.kind} />
       </>
     )
-    return fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>
+    return withTitle(fullscreen ? node : <AlternateScreen>{node}</AlternateScreen>)
   }
 
   // 浮层整体挂载条件：与内部各面板的可见条件同值（数据门在
@@ -6922,8 +6969,8 @@ export function Chat({
     )
     : null
 
-  return (
-    <Box ref={wakeTickRef} flexDirection="column" flexGrow={1} width="100%">
+  return withTitle(
+    <Box flexDirection="column" flexGrow={1} width="100%">
       {/* 分栏布局：geometry 为 null（收起 / 窄屏 / inline / 编辑器展开）
           时 SidePanelLayout 原样渲染 children，与现状逐字节一致；分栏时
           左栏拿到 chatColumns 的 TerminalSizeContext 覆盖与出血边界。 */}
@@ -7244,8 +7291,11 @@ export function Chat({
               }}
             />
           </Box>
-        ) : btwOverlayOpen && !sidePanel.enabledPanelIds.includes('btw') ? (
-          // 浮层只在 btw 面板未启用时显示；面板中途被启用就立即让位。
+        ) : btwOverlayVisible ? (
+          // 浮层只在 btw 线程没有真正上屏时显示：面板未启用，或分栏渲不
+          // 出来（窄屏 / inline / splitEnabled=false），或分栏
+          // 在、但画的是别的面板。侧栏真的显示 btw 线程时浮层立即让位——
+          // 单一 surface（判定见 btwPanelOnScreen）。
           <Box flexDirection="column" marginTop={1}>
             <BtwPanelFallback
               thread={btwOverlayThread}
@@ -7331,7 +7381,6 @@ export function Chat({
               : {
                   band: wakeBand,
                   hint: trajectorySeen ? undefined : primaryComboString('trajectory'),
-                  tick: Math.floor(wakeTime / 120),
                   onOpen: openScene,
                   hoverHint: primaryComboString('trajectory'),
                 }
@@ -7358,7 +7407,7 @@ export function Chat({
           订阅模块级 store，锚点/内容由各处 useTooltip hover props 写入；
           resize 时自行隐藏（几何失效）。 */}
       <TooltipLayer
-        invalidationKey={`${overlay.kind}:${dialogOverlayOpen}:${btwOverlayOpen}`}
+        invalidationKey={`${overlay.kind}:${dialogOverlayOpen}:${btwOverlayVisible}`}
         subscribeInvalidation={subscribeTooltipInvalidation}
       />
       </SidePanelLayout>

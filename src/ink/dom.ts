@@ -104,6 +104,10 @@ export type DOMElement = {
   // leave useSyncExternalStore snapshots stale (the new-messages pill
   // never clears).
   onStickyRestore?: () => void
+  // Manual wheel drain reached its final position without a sticky restore.
+  // Subscribers must re-read the final scrollTop / pending delta even when
+  // no parent animation or new input will produce another React commit.
+  onScrollDrainEnd?: () => void
   // Renderer → React notification channel, set by ScrollBox to its
   // subscriber-notify. Invoked ONLY when the scroll viewport's HEIGHT
   // changes between two layout passes — the renderer just overwrote

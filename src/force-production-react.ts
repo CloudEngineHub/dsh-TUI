@@ -5,7 +5,7 @@
  * forces production, but a direct `dsh --profile dsh-tui` boot loads this
  * plugin without one and silently regressed to the dev build. This module
  * must stay the FIRST import of the package entry so its body runs before
- * any module in the plugin graph requires react. `??=` keeps an explicit
- * environment choice (a debugging session) in control.
+ * any module in the plugin graph requires react. A workspace's NODE_ENV
+ * does not opt the TUI into development; use DSH_TUI_REACT_DEV=1 explicitly.
  */
-process.env.NODE_ENV ??= 'production'
+process.env.NODE_ENV = process.env.DSH_TUI_REACT_DEV === '1' ? 'development' : 'production'

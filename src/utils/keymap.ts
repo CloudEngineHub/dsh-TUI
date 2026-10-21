@@ -231,7 +231,7 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionSpec[] = [
   { id: 'contextPanel', defaults: ['ctrl+p'] },
   // 落地页 Continue：alt+r（resume 语义）。占用核对（SHORTCUT_ACTIONS defaults ∪
   // FIXED_RESERVED_COMBOS）：ctrl 系 v/r/g/o/t/a/p/e/l/q/k/b/c/d/u/w/j/left/right/return
-  // 全占，alt 系只有 v/s/z/return/up 在册——alt+r 空闲，且不与输入框抢字母键。
+  // 全占；alt+r 空闲，且不与输入框抢字母键。
   { id: 'continue', defaults: ['alt+r'] },
   { id: 'showAll', defaults: ['ctrl+e'] },
   { id: 'redraw', defaults: ['ctrl+l'] },
@@ -385,9 +385,12 @@ export const FIXED_RESERVED_COMBOS: readonly string[] = [
   'ctrl+u', // kill line
   'ctrl+k', // kill to end
   'ctrl+w', // kill word
+  'alt+backspace', // kill word (Option-as-Meta / extended key reporting)
   'ctrl+j', // newline fallback (legacy LF / extended key reporting)
   'ctrl+left', // word jump
   'ctrl+right', // word jump
+  'alt+left', // word jump
+  'alt+right', // word jump
   'ctrl+return', // newline (multi-line input)
   'ctrl+shift+return', // shift+Enter newline (CSI 13;6u) — same editor binding
   'alt+return', // newline fallback on terminals without shift reporting

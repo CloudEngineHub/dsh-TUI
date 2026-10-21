@@ -84,6 +84,7 @@ export function createForkSessionAction(
           runtimeSession: source,
           inheritedCount: seed.length,
           cwd: state.cwd,
+          parentSession: source.id,
           agentPreset: forkComposed.agentPreset,
           agentOptions: { provider: state.provider, model: state.model },
           setup: forkComposed.setup,

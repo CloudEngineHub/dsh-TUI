@@ -30,11 +30,12 @@
  * fullscreen mount then proves Ctrl+E really toggled show-all (the row
  * hidden behind MessageList's render cap appears), which the caret probe
  * alone cannot tell apart from a press nobody handled.
- * While a turn is working, Esc still belongs to the draft editor / input
- * selection before Chat's interrupt branch, including in one stdin batch.
+ * While a turn is working, Esc still belongs to local composer layers
+ * before Chat's interrupt branch, including in one stdin batch (#1310).
  *
  * Run after build: `node scripts/verify-keymap.mjs`
  */
+import './lib/fake-home.mjs'
 import { Writable, PassThrough } from 'node:stream'
 import React from 'react'
 import xtermHeadless from '@xterm/headless'
@@ -117,6 +118,8 @@ check('other actions keep their defaults reserved', reserved.has('ctrl+o') && re
 check('fixed: ctrl+u kill-line reserved', isFixedReserved('ctrl+u'))
 check('fixed: ctrl+return reserved', isFixedReserved('ctrl+return'))
 check('fixed: ctrl+w reserved', isFixedReserved('ctrl+w'))
+check('fixed: Option word-editing keys reserved',
+  ['alt+backspace', 'alt+left', 'alt+right'].every(isFixedReserved))
 check('fixed: ctrl+j newline fallback reserved', isFixedReserved('ctrl+j'))
 check('free combo not reserved', !isFixedReserved('ctrl+n'))
 
@@ -131,6 +134,7 @@ check('draft: junk refused', parseComboDraft('press the b key') === undefined)
 check('draft: escape combo refused', parseComboDraft('alt+escape') === undefined)
 check('conflict: history → ctrl+v refused (owned by paste)', draftComboConflicts('history', ['ctrl+v']))
 check('conflict: paste → ctrl+u refused (fixed kill-line)', draftComboConflicts('paste', ['ctrl+u']))
+check('conflict: paste → alt+backspace refused (fixed word deletion)', draftComboConflicts('paste', ['alt+backspace']))
 check('no conflict: history restating ctrl+r', !draftComboConflicts('history', ['ctrl+r']))
 check('no conflict: fresh combo ctrl+n', !draftComboConflicts('history', ['ctrl+n']))
 // Restating an action's OWN default (even one that is also fixed-reserved
@@ -182,8 +186,8 @@ const term = new XTerm({ cols: 110, rows: 34, scrollback: 100, allowProposedApi:
 
 function makeStreams(target = term) {
   const stdout = new Writable({ write(chunk, _enc, cb) { target.write(String(chunk), cb) } })
-  stdout.columns = 110
-  stdout.rows = 34
+  stdout.columns = target.cols
+  stdout.rows = target.rows
   stdout.isTTY = true
   const stderr = new Writable({ write(_c, _e, cb) { cb() } })
   stderr.isTTY = true
@@ -475,5 +479,108 @@ fs.stdin.write('\x1b')
 check('working Esc without an editing layer still interrupts', await settled(() => cancelCalls === 1))
 check('interrupting Esc keeps the unsent draft', fsController.current.text() === DRAFT)
 fsInstance.unmount()
+
+// Command/file menus, paste folds and context chips are local layers too.
+// Exercise Chat's actual first listener in both screen modes, not a mock
+// dispatcher that happens to invoke the composer before cancel().
+const { completeCommands } = await import('../lib/types/commands.js')
+channel.commandList = [{ name: 'help', description: 'palette-probe' }]
+channel.commandCompletions = value => completeCommands(value, channel.commandList)
+const file = { id: 'esc-file', path: 'esc-menu-target.ts', displayPath: 'esc-menu-target.ts', name: 'esc-menu-target.ts', kind: 'file', score: 1 }
+channel.listFileCandidates = async () => [file]
+channel.attachedContexts = []
+channel.detachContext = id => {
+  channel.attachedContexts = channel.attachedContexts.filter(item => item.id !== id)
+  channel.emit()
+}
+notifications.length = 0
+for (const columns of [120, 48]) {
+  for (const fullscreen of [false, true]) {
+    const label = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}x40`
+    const target = new XTerm({ cols: columns, rows: 40, scrollback: 100, allowProposedApi: true })
+    const io = makeStreams(target)
+    const controller = { current: null }
+    const chat = React.createElement(Chat, {
+      channel,
+      questionStore: { subscribe: () => () => {}, getSnapshot: () => null, answerCurrent() {} },
+      starPrompt: null,
+      fullscreen,
+      promptControllerRef: controller,
+      onExit() {},
+    })
+    const app = await render(fullscreen ? React.createElement(AlternateScreen, null, chat) : chat,
+      { ...io, exitOnCtrlC: false, patchConsole: false })
+    const screen = () => viewportLines(target).join('\n')
+    const esc = '\x1b[27u'
+    const loadDraft = async text => {
+      controller.current.clear()
+      io.stdin.write(text)
+      await settle(() => controller.current.text() === text)
+      cancelCalls = 0
+    }
+    await settle(() => controller.current !== null && screen().includes('❯'))
+
+    await loadDraft('/')
+    await settle(() => screen().includes('palette-probe'))
+    console.log(`SCREEN before command-menu Esc ${label}\n${screen().trimEnd()}`)
+    io.stdin.write(esc)
+    check(`${label}: command-menu Esc closes the menu without interrupting`,
+      await settled(() => !screen().includes('palette-probe') && controller.current.text() === '' && cancelCalls === 0), screen())
+    console.log(`SCREEN after command-menu Esc ${label}\n${screen().trimEnd()}`)
+
+    await loadDraft('prefix @esc suffix')
+    io.stdin.write('\x1b[D'.repeat(7))
+    await settle(() => screen().includes(file.name))
+    io.stdin.write(esc)
+    check(`${label}: file-menu Esc preserves the whole mid-message draft`,
+      await settled(() => !screen().includes(file.name) && controller.current.text() === 'prefix @esc suffix' && cancelCalls === 0), screen())
+    io.stdin.write('X')
+    check(`${label}: editing the dismissed token reopens completion`,
+      await settled(() => screen().includes(file.name) && controller.current.text() === 'prefix @escX suffix'), screen())
+    io.stdin.write(esc)
+    await settle(() => !screen().includes(file.name))
+    io.stdin.write(esc)
+    check(`${label}: next Esc without a local layer still interrupts`,
+      await settled(() => cancelCalls === 1 && controller.current.text() === 'prefix @escX suffix'), String(cancelCalls))
+
+    await loadDraft('')
+    io.stdin.write(`/${esc}!`)
+    check(`${label}: batched slash/Esc/typing closes only the command draft`,
+      await settled(() => controller.current.text() === '!' && cancelCalls === 0), controller.current.text())
+
+    await loadDraft('')
+    const foldedText = Array.from({ length: 6 }, (_, i) => `fold-row-${i}`).join('\n')
+    io.stdin.write(`\x1b[200~${foldedText}\x1b[201~`)
+    await settle(() => screen().includes('6 lines'))
+    io.stdin.write(esc)
+    check(`${label}: folded-paste Esc unfolds without changing text or interrupting`,
+      await settled(() => screen().includes('fold-row-5') && !screen().includes('6 lines') && controller.current.text() === foldedText && cancelCalls === 0), screen())
+
+    await loadDraft('context draft')
+    channel.attachedContexts = [{ id: 'esc-context', source: 'panel', sourceId: 'esc-panel', title: 'context-probe', content: 'context payload', chars: 15, truncated: false }]
+    channel.emit()
+    await settle(() => screen().includes('context-probe'))
+    io.stdin.write(esc)
+    check(`${label}: context-chip Esc removes the chip and keeps the draft and turn`,
+      await settled(() => channel.attachedContexts.length === 0 && !screen().includes('context-probe') && controller.current.text() === 'context draft' && cancelCalls === 0), screen())
+    channel.attachedContexts = [{ id: 'vim-context', source: 'panel', sourceId: 'esc-panel', title: 'vim-context-probe', content: 'context payload', chars: 15, truncated: false }]
+    channel.emit()
+    controller.current.toggleVim()
+    await settle(() => screen().includes('INSERT') && screen().includes('vim-context-probe'))
+    io.stdin.write(esc)
+    check(`${label}: Vim Esc keeps its mode meaning with a context chip attached`,
+      await settled(() => screen().includes('NORMAL') && channel.attachedContexts.length === 1 && controller.current.text() === 'context draft' && cancelCalls === 0), screen())
+    controller.current.toggleVim()
+    channel.attachedContexts = []
+    channel.emit()
+
+    await loadDraft('plain draft')
+    io.stdin.write(esc)
+    check(`${label}: ordinary working-draft Esc keeps its existing interrupt meaning`,
+      await settled(() => cancelCalls === 1 && controller.current.text() === 'plain draft'), String(cancelCalls))
+    app.unmount()
+    target.dispose()
+  }
+}
 console.log(failed === 0 ? '\nall keymap checks passed' : `\n${failed} keymap check(s) failed`)
 process.exit(failed === 0 ? 0 : 1)

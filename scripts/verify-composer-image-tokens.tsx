@@ -288,6 +288,13 @@ stdin.write(CTRL_W)
 check('delete: Ctrl+W after the token removes the whole token, not just the text after its space',
   await settled(() => !text().includes(t3) && noTokenFragment() && draftIs(/❯ a +b/u)), text())
 
+for (const seq of ['\x1b\x7f', '\x1b[127;3u']) {
+  const token = await paste()
+  stdin.write(seq)
+  check(`delete: Option+Backspace ${JSON.stringify(seq)} removes the whole token and preserves nearby text`,
+    await settled(() => !text().includes(token) && noTokenFragment() && draftIs(/❯ a +b/u)), text())
+}
+
 // Selection: click before "a", then Shift+click inside the token — the
 // selection grows to the token's end and Backspace removes it whole.
 const t4 = await paste()
