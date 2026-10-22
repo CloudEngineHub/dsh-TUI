@@ -287,6 +287,7 @@ dsh-tui
 - 原本只能整屏的视图现在也能进侧栏：分屏开着且对应面板已启用时，`Ctrl+T` / `/trace` 打开轨迹面板、
   `/home` 打开工作区面板；面板栏右端的 `⤢` 再把它们放回整屏（`⤢` 是鼠标入口，键盘等价物就是各自的
   整屏快捷键：`Ctrl+T` 轨迹、`Ctrl+A` 子代理、`/jobs` 任务、`/home` 工作区主页）。
+- 临时插件面板显示可读标题与本次运行的独立编号，勾选只改变当前界面，不保存为偏好。请移除旧 `actN:panel` 占位项并重新选择当前面板。
 - 设置：`/settings` → `侧栏` 分组，或 `dsh-tui.sidePanel.{splitEnabled,open,ratio,panels}`
   （见[配置参考](configuration.md#tui-配置)）。
 - **tmux 用户注意**：`Ctrl+B` 是 tmux 的默认前缀键，会被 tmux 截走、送不到 TUI——到

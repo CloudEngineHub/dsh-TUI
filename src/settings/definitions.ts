@@ -288,8 +288,8 @@ export const SETTING_DEFINITIONS = {
     label: 'Enabled panels',
     descriptions: { zh: '启用的面板' },
     group: 'side-panel',
-    hint: 'Tick the panels the side panel bar shows: a new tick appends at the end, unticking removes. Panels registered by plugins appear here automatically, and a well-formed id nothing claims yet stays as a checked placeholder. The Advanced row edits the raw comma list (e.g. to reorder). Applies immediately.',
-    hintDescriptions: { zh: '勾选侧栏标签栏要显示的面板：新勾选的追加在末尾，取消即移除。插件注册的面板会自动出现在这里；格式合法但尚无面板认领的 id 会保留为已勾选的占位行。「高级」行可编辑原始逗号列表（如调整顺序）。立即生效。' },
+    hint: 'Tick the panels the side panel bar shows: a new tick appends at the end, unticking removes. Panels registered by plugins appear here automatically, and a well-formed id nothing claims yet stays as a checked placeholder. Temporary panels show their title and a run-local number; their checkboxes affect this run only and are never saved. Remove old actN placeholders and select the current panel again. The Advanced row edits persistent ids only (e.g. to reorder). Applies immediately.',
+    hintDescriptions: { zh: '勾选侧栏标签栏要显示的面板：新勾选的追加在末尾，取消即移除。插件注册的面板会自动出现在这里；格式合法但尚无面板认领的 id 会保留为已勾选的占位行。临时面板显示标题和本次运行编号，其勾选只影响当前运行，不保存；旧 actN 占位项应移除后重新选择当前面板。「高级」行仅编辑持久 id（如调整顺序）。立即生效。' },
     kind: 'text',
   },
   'sidePanel.ratio': {
@@ -671,8 +671,8 @@ export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: 
   todoFold: {
     label: 'Todo fold shortcut',
     zh: '待办折叠快捷键',
-    hintEn: d => `Fold/unfold the goal/todo panel. Default: ${d}.`,
-    hintZh: d => `折叠/展开目标与待办面板。默认 ${d}。`,
+    hintEn: d => `Fold running todos; hide/restore the idle goal/todo footer. Default: ${d}.`,
+    hintZh: d => `运行时折叠待办，空闲时隐藏/恢复目标与待办底部面板。默认 ${d}。`,
   },
   questionFold: {
     label: 'Question panel fold shortcut',

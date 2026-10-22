@@ -104,6 +104,13 @@ root.inject(['tuiPanels'], ctx => { pluginA = ctx })
 root.inject(['tuiPanels'], ctx => { pluginB = ctx })
 await new Promise(resolve => setImmediate(resolve))
 if (pluginA === undefined || pluginB === undefined) throw new Error('could not create plugin activations')
+// Keep the persistent-selection cases on a verified Component. Anonymous
+// activations below exercise the separate session-only selection path.
+const { bindComponentIdentity } = await import('../src/dsh-adapter/component-identity.js')
+const { parseManifest, projectManifest } = await import('../src/adapter/standard/protocols.js')
+const { testManifest } = await import('./lib/plugin-test-utils.js')
+const manifestA = parseManifest(testManifest({ id: 'verify-panel-a' }), { source: 'test:panels' })
+bindComponentIdentity(pluginA, manifestA, projectManifest(manifestA), 'verify-panel-a-activation')
 const panelsA = pluginA.get('tuiPanels') as PanelsService
 const panelsB = pluginB.get('tuiPanels') as PanelsService
 
@@ -228,6 +235,15 @@ const disposeSub = panelsA.subscribe(event => {
 })
 const disposeB = panelsB.register({ apiVersion: 1, id: 'bpanel', title: 'B', component: () => null })
 const idB = panelsB.list().find(e => e.id.endsWith(':bpanel'))?.id ?? 'b:none'
+check('anonymous id has a disjoint session namespace', /^session:act[0-9]+:bpanel$/u.test(idB))
+applySidePanelPanelsFromSettings('todo')
+check('saving persistent selection keeps the anonymous panel enabled', parseSidePanelIds(getSidePanelPanels()).includes(idB))
+applySidePanelPanels(parseSidePanelIds(getSidePanelPanels()).filter(id => id !== idB).join(','))
+applySidePanelPanelsFromSettings('todo,jobs')
+check('saving cannot revive a session-only panel toggled off', !parseSidePanelIds(getSidePanelPanels()).includes(idB))
+applySidePanelPanels(getSidePanelPanels() + ',' + idB)
+applyConfiguredSidePanelPanels('todo')
+check('session-only panel can be re-enabled without a saved id', parseSidePanelIds(getSidePanelPanels()).includes(idB))
 panelsA.badge(idA, { level: 'info', unread: 1 })
 panelsB.badge(idB, { level: 'info', unread: 1 })
 check('own badge event delivered + listener crash swallowed', eventsA.some(e => e === 'badge:' + idA))

@@ -16,6 +16,8 @@
  *  - visible=false never starts (or re-fires) a registry fetch.
  * Run: node --import tsx/esm scripts/verify-workspace-panel.tsx
  */
+import type { SessionSummary } from '../src/adapter/ports/channel-session.js'
+
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
@@ -47,8 +49,8 @@ interface StubEntry { id: string; path: string; title: string; present: boolean;
 // 跨平台：current 高亮断言要求 entry.path 与 channel.cwd 在任何平台的
 // normalizeWorkspaceCwd 下都判等——两侧同形（同盘符大小写、同分隔符），
 // 大小写/斜线容错由 normalizeWorkspaceCwd 的单测覆盖，不在这里赌平台行为。
-const CURRENT = { id: 'w-cur', path: 'd:/code/projects/dsh-tui', title: 'dsh-tui', present: true, sessionCount: 3 }
-const MISSING = { id: 'w-miss', path: 'D:\\gone\\dir', title: 'gone-dir', present: false, sessionCount: 1 }
+const CURRENT = { id: 'w-cur', path: 'd:/code/projects/dsh-tui', title: 'dsh-tui', present: true, sessionCount: 0 }
+const MISSING = { id: 'w-miss', path: 'D:\\gone\\dir', title: 'gone-dir', present: false, sessionCount: 0 }
 const LONGP = { id: 'w-long', path: 'C:\\Users\\someone\\very\\deep\\nested\\directory\\tree\\with\\a\\long\\tail\\project-name-here', title: 'long-project', present: true, sessionCount: 0 }
 const MANY: StubEntry[] = Array.from({ length: 24 }, (_, i) => ({ id: 'w-' + i, path: 'D:\\ws\\proj-' + i, title: 'proj-' + i, present: true, sessionCount: i }))
 
@@ -60,12 +62,33 @@ const registry = (): Promise<StubEntry[]> => {
   const list = nextResult === 'ok-many' ? MANY : [CURRENT, MISSING, LONGP]
   return Promise.resolve(list)
 }
-const channel = {
+const summary = (id: string, cwd: string, extra: Partial<SessionSummary> = {}): SessionSummary => ({
+  id, cwd, kind: { kind: 'root' }, title: { text: id, source: 'prompt' },
+  createdAt: 0, updatedAt: 0, bytes: 0, hasPrompt: true, agentPreset: undefined,
+  model: undefined, label: undefined, branch: undefined, childCount: 0, ...extra,
+})
+const sessionRows = [
+  summary('ancestor', CURRENT.path),
+  summary('current', CURRENT.path, { kind: { kind: 'fork', parent: 'ancestor' } }),
+  summary('other', CURRENT.path + '/'),
+  summary('third', CURRENT.path.replaceAll('/', '\\')),
+  summary('archived', CURRENT.path, { archived: true }),
+  summary('empty', CURRENT.path, { hasPrompt: false }),
+  summary('worker', CURRENT.path, { kind: { kind: 'subagent', parent: 'current', depth: 1 } }),
+  summary('missing', MISSING.path),
+]
+let finishInitial: ((rows: readonly SessionSummary[]) => void) | undefined
+let sessionFetch: () => Promise<readonly SessionSummary[]> = () => new Promise(resolve => { finishInitial = resolve })
+const channelState = {
+  agentBindingGeneration: 1,
+  agentId: 'current', sessionId: 'current',
   cwd: 'd:/code/projects/dsh-tui',
   displayCwd: '~/code/projects/dsh-tui',
   gitBranch: 'feat/launchpad-onboarding',
   listWorkspaceRegistry: registry,
-} as never
+  listSessions: () => sessionFetch(),
+}
+const channel = channelState as never
 
 // --- harness -----------------------------------------------------------------
 let openCalls: string[] = []
@@ -143,14 +166,20 @@ const focusedLine = (): string => lines().find(l => l.includes('❯')) ?? ''
 
 try {
   // --- 1. loading, then the fixed list renders ------------------------------
-  await settled(() => lines().some(l => l.includes('Loading workspaces')), { timeout: 4000 })
-  check('load: loading line while the registry promise is pending', true)
+  check('load: loading line while session count is pending', await settled(() => lines().some(l => l.includes('Loading workspaces')), { timeout: 4000 }))
+  finishInitial?.(sessionRows)
+  sessionFetch = () => Promise.resolve(sessionRows)
   await settled(() => lines().some(l => l.includes('dsh-tui') && l.includes('❯')), { timeout: 4000 })
   const listState = lines()
+  console.log('SCREEN workspace counts\n' + listState.filter(line => line.trim()).join('\n'))
   check('load: registry rows render (titles)', listState.some(l => l.includes('gone-dir')) && listState.some(l => l.includes('long-project')))
   check('load: header counts 3 registered', listState.some(l => l.includes('Registered workspaces ×3')), listState.find(l => l.includes('Registered')) ?? '')
   check('load: current cwd + branch shown', listState.some(l => l.includes('~/code/projects/dsh-tui')) && listState.some(l => l.includes('feat/launchpad-onboarding')), listState.find(l => l.includes('feat/')) ?? '')
   check('load: hint line present', listState.some(l => l.includes('\u2191/\u2193 select') && l.includes('Enter')))
+
+  check('counts: current tip counts, ancestors/empty/subagents do not', listState.some(l => l.includes('dsh-tui') && l.includes('3 sessions')))
+  check('counts: one-session and zero-session workspaces stay registered', listState.some(l => l.includes('gone-dir') && l.includes('1 sessions'))
+    && listState.some(l => l.includes('long-project') && l.includes('0 sessions')))
 
   // --- 2. current-workspace highlight + missing marker ----------------------
   const curLine = listState.find(l => l.includes('\u25cf')) !== undefined ? { text: listState.find(l => l.includes('\u25cf'))!, row: 0 } : null
@@ -231,6 +260,42 @@ try {
     check('hover: a hoverable row exists', false, 'no proj-5/6 row on screen')
   }
 
+  nextResult = 'ok-current'
+  sessionFetch = () => Promise.resolve(sessionRows.map(row => ({ ...row, archived: false })))
+  stdin.write('r')
+  check('unarchive: restored conversation counts without changing registration', await settled(() => lines().some(l => l.includes('dsh-tui') && l.includes('4 sessions'))))
+  let finishRefresh: ((rows: readonly SessionSummary[]) => void) | undefined
+  sessionFetch = () => new Promise(resolve => { finishRefresh = resolve })
+  stdin.write('r')
+  await settled(() => finishRefresh !== undefined)
+  sessionFetch = () => Promise.resolve(sessionRows)
+  stdin.write('r')
+  await settled(() => lines().some(l => l.includes('dsh-tui') && l.includes('3 sessions')))
+  finishRefresh?.([])
+  await sleep(120) // 固定窗:探针 overlapping refresh must not restore stale zero counts
+  check('refresh: late same-binding listing cannot overwrite newest counts', lines().some(l => l.includes('dsh-tui') && l.includes('3 sessions')))
+
+  // A binding change starts a fresh listing; the old session read cannot win.
+  let finishOld: ((rows: readonly SessionSummary[]) => void) | undefined
+  sessionFetch = () => new Promise(resolve => { finishOld = resolve })
+  nextResult = 'ok-current'
+  stdin.write('r')
+  await settled(() => finishOld !== undefined, { timeout: 4000 })
+  sessionFetch = () => Promise.resolve([summary('new', CURRENT.path)])
+  channelState.agentBindingGeneration += 1
+  channelState.agentId = 'new'
+  channelState.sessionId = 'new'
+  bumpKey?.()
+  await settled(() => lines().some(l => l.includes('dsh-tui') && l.includes('1 sessions')), { timeout: 4000 })
+  finishOld?.(sessionRows)
+  await sleep(120) // 固定窗:探针 stale Promise settlement must not repaint the old binding
+  check('binding: late old listing cannot overwrite new counts', lines().some(l => l.includes('dsh-tui') && l.includes('1 sessions')))
+  sessionFetch = () => Promise.reject(new Error('sessions offline'))
+  stdin.write('r')
+  await settled(() => lines().some(l => l.includes('Failed to load workspaces')), { timeout: 4000 })
+  check('sessions failure: an unreadable listing is not displayed as zero', !lines().some(l => l.includes('0 sessions')))
+  sessionFetch = () => Promise.resolve(sessionRows)
+
   // --- 8. visible=false never (re-)fires a fetch -----------------------------
   const fetchBefore = fetchCount
   panelVisible = false
@@ -238,6 +303,11 @@ try {
   bumpKey?.()
   await sleep(120) // 固定窗:探针 visible=false 后的观察窗——断言静默期不发请求
   check('visible=false: hiding the panel fires no fetch', fetchCount === fetchBefore, String(fetchCount - fetchBefore))
+  channelState.agentId = 'hidden-binding'
+  channelState.sessionId = 'hidden-binding'
+  bumpKey?.()
+  await sleep(120) // 固定窗:探针 hidden binding changes must not start a listing
+  check('visible=false: binding changes stay silent', fetchCount === fetchBefore)
   // remount from cold with visible=false: still silent.
   harnessKey += 1
   bumpKey?.()

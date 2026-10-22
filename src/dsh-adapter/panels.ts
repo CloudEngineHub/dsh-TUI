@@ -34,7 +34,7 @@ import { panelStore, type PanelStoreEvent } from '../components/sidePanel/PanelS
 import type { PanelDefinition, PanelOwner } from '../components/sidePanel/types.js'
 import { makePluginPanelComponent } from '../components/sidePanel/pluginPanelAdapter.js'
 import { panelBridgeRequests } from '../components/sidePanel/panelBridge.js'
-import { applySidePanelPanels, getSidePanelPanels, parseSidePanelIds } from '../tuiDisplayPrefs.js'
+import { applySidePanelPanels, getSidePanelPanels, isTemporarySidePanelId, isLegacyAnonymousSidePanelId, persistentSidePanelId, parseSidePanelIds } from '../tuiDisplayPrefs.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import type { TuiPluginStorage } from './plugin-storage.js'
 import {
@@ -330,8 +330,7 @@ function panelStateFor(runtime: TuiPanelRuntime): PanelState {
   return state
 }
 
-/** 无 Component identity 的裸挂载（测试夹具）需要一个稳定命名空间：
- * 按 activation fiber 发号。 */
+/** Anonymous activation ids are session-only, never persistent identities. */
 const fallbackPluginIds = new WeakMap<object, string>()
 let fallbackSeq = 0
 
@@ -343,7 +342,7 @@ function pluginIdFor(caller: Context, owner: object): string {
   let fallback = fallbackPluginIds.get(owner)
   if (fallback === undefined) {
     fallbackSeq += 1
-    fallback = 'act' + String(fallbackSeq)
+    fallback = 'session:act' + String(fallbackSeq)
     fallbackPluginIds.set(owner, fallback)
   }
   return fallback
@@ -701,7 +700,8 @@ const removedPanelIds = new Set<string>()
 function enablePanelIdInStore(id: string): void {
   registeredPanelIds.add(id)
   removedPanelIds.delete(id)
-  const ids = [...parseSidePanelIds(getSidePanelPanels())]
+  const persistentId = persistentSidePanelId(id)
+  const ids = [...new Set(parseSidePanelIds(getSidePanelPanels()).map(candidate => candidate === persistentId ? id : candidate))]
   if (!ids.includes(id)) ids.push(id)
   applySidePanelPanels(ids.join(','))
 }
@@ -716,8 +716,18 @@ function disablePanelIdInStore(id: string): void {
 
 /** 应用 `sidePanel.panels` 配置，已注册的面板 id 并回尾部（除非被显式移除）。 */
 export function applyConfiguredSidePanelPanels(configured: string | undefined): void {
-  const ids = [...parseSidePanelIds(configured ?? getSidePanelPanels())]
+  const live = new Set(parseSidePanelIds(getSidePanelPanels()))
+  const ids = configured === undefined
+    ? [...live].filter(id => !isTemporarySidePanelId(id))
+    : parseSidePanelIds(configured).filter(id => !isTemporarySidePanelId(id) && !isLegacyAnonymousSidePanelId(id)).map(id => {
+      const runtimeId = id.startsWith('component:') ? id.slice('component:'.length) : id
+      return isLegacyAnonymousSidePanelId(runtimeId) && registeredPanelIds.has(runtimeId) ? runtimeId : id
+    })
   for (const id of registeredPanelIds) {
+    if (isTemporarySidePanelId(id)) {
+      if (live.has(id)) ids.push(id)
+      continue
+    }
     if (removedPanelIds.has(id) || ids.includes(id)) continue
     ids.push(id)
   }
@@ -731,7 +741,7 @@ export function applyConfiguredSidePanelPanels(configured: string | undefined): 
 export function applySidePanelPanelsFromSettings(configured: string | undefined): void {
   if (configured !== undefined) {
     const ids = new Set(parseSidePanelIds(configured))
-    for (const id of registeredPanelIds) if (!ids.has(id)) removedPanelIds.add(id)
+    for (const id of registeredPanelIds) if (!isTemporarySidePanelId(id) && !ids.has(persistentSidePanelId(id))) removedPanelIds.add(id)
   }
   applyConfiguredSidePanelPanels(configured)
 }

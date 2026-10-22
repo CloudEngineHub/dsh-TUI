@@ -169,7 +169,13 @@ try {
   owner = createChannelOwner()
   const pushed = []
   let currentProvider = live
-  const metadata = createSessionMetadataActions({ get: name => name === 'sessionPersistence' ? currentProvider : undefined }, {
+  let archiveIds = []
+  let archiveFailure = false
+  let archiveRegistry = { get archivedSessionIds() {
+    if (archiveFailure) throw new Error('archive read failed')
+    return archiveIds
+  } }
+  const metadata = createSessionMetadataActions({ get: name => name === 'sessionPersistence' ? currentProvider : name === 'workspaceRegistry' ? archiveRegistry : undefined }, {
     owner,
     binding: { capture: () => ({ agent, generation: 1 }), isCurrent: () => owner.current() },
     provider: () => 'deepseek', model: () => 'model', cwd: () => '/proj', emit: () => undefined,
@@ -185,6 +191,17 @@ try {
   check('and listSessions() still runs the real listing', (await actions.listSessions()).map(row => row.id), ['live'])
   check('the listing was pushed to the channel state', pushed.at(-1).map(row => row.id), ['live'])
   check('having called the backend exactly once more', backendCalls, callsAfterSave + 1)
+  archiveIds = ['live']
+  check('cached listing projects the public archive getter', actions.cachedSessions()[0].archived, true)
+  check('fresh listing projects archive state without dropping lineage rows', (await actions.listSessions())[0].archived, true)
+  archiveIds = []
+  check('unarchiving restores the same cached conversation', actions.cachedSessions()[0].archived, false)
+  archiveFailure = true
+  await assert.rejects(actions.listSessions(), /archive read failed/)
+  assert.throws(() => actions.cachedSessions(), /archive read failed/)
+  archiveFailure = false
+  archiveRegistry = {}
+  check('legacy registry with no archive capability remains supported', (await actions.listSessions())[0].archived, false)
   const liveList = live.list
   live.list = async () => coldHeaders
   let forwardedPartial

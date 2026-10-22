@@ -16,7 +16,7 @@ import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import { panelStore } from '../components/sidePanel/PanelStore.js'
 import { registerBuiltinPanels } from '../components/sidePanel/builtinPanels.js'
 import type { TuiStatusFieldEntry } from '../dsh-adapter/status.js'
-import { ALL_PLUGIN_FIELDS, formatPluginFieldsOrder, parsePluginFieldsOrder, STATUS_FIELD_SLOTS, SIDE_PANEL_ID_PATTERN, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
+import { ALL_PLUGIN_FIELDS, applySidePanelPanels, getSidePanelPanels, isLegacyAnonymousSidePanelId, isTemporarySidePanelId, persistentSidePanelId, parseSidePanelIds, subscribeSidePanelPanels, formatPluginFieldsOrder, parsePluginFieldsOrder, STATUS_FIELD_SLOTS, SIDE_PANEL_ID_PATTERN, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
 
 // The panel picker enumerates the live registry: builtin panels register on
 // import (same idempotent call SidePanelColumn makes), plugins come and go
@@ -763,6 +763,7 @@ export function Settings({
    *  register/unregister (a plugin landing mid-session adds its row on the
    *  open screen — the list is never a frozen snapshot). */
   const panelEntries = React.useSyncExternalStore(panelStore.subscribe, () => panelStore.list())
+  const livePanelIds = parseSidePanelIds(React.useSyncExternalStore(subscribeSidePanelPanels, getSidePanelPanels))
 
   /**
    * Checkbox rows of one picker field, in display order: every registered
@@ -773,8 +774,12 @@ export function Settings({
    */
   const panelPickerRows = (ns: string, field: TuiSettingsField): { id: string; checked: boolean }[] => {
     const ids = panelIdsFromText(forms.get(ns)?.field(field).text ?? '')
-    const claimed = new Set(panelEntries.map(entry => entry.definition.id))
-    const rows = panelEntries.map(entry => ({ id: entry.definition.id, checked: ids.includes(entry.definition.id) }))
+    const claimed = new Set(panelEntries.map(entry => persistentSidePanelId(entry.definition.id)))
+    const rows = panelEntries.map(entry => {
+      const runtimeId = entry.definition.id
+      const id = persistentSidePanelId(runtimeId)
+      return { id, checked: isTemporarySidePanelId(runtimeId) ? livePanelIds.includes(runtimeId) : ids.includes(id) }
+    })
     for (const id of ids) {
       if (!claimed.has(id)) rows.push({ id, checked: true })
     }
@@ -903,6 +908,16 @@ export function Settings({
   const togglePanel = (ns: string, field: TuiSettingsField, panelId: string): void => {
     const form = forms.get(ns)
     if (form === undefined || !form.available) return
+    if (isTemporarySidePanelId(panelId) && panelStore.get(panelId) !== undefined) {
+      const live = parseSidePanelIds(getSidePanelPanels())
+      const next = live.includes(panelId) ? live.filter(id => id !== panelId) : [...live, panelId]
+      if (next.length === 0) {
+        setNotice({ text: t('settings-panels-min-one'), tone: 'error' })
+        return
+      }
+      applySidePanelPanels(next.join(','))
+      return
+    }
     const current = panelIdsFromText(form.field(field).text)
     const next = current.includes(panelId)
       ? current.filter(id => id !== panelId)
@@ -1160,7 +1175,7 @@ export function Settings({
     const ns = section.ns
     const form = forms.get(ns)
     const state = form?.field(field) ?? { text: '', overridden: false, invalid: false }
-    const registered = new Map(panelEntries.map(entry => [entry.definition.id, entry]))
+    const registered = new Map(panelEntries.map(entry => [persistentSidePanelId(entry.definition.id), entry]))
     entries.push({
       key: `panel-header:${ns}:${field.path.join('.')}`,
       lines: 1,
@@ -1189,10 +1204,12 @@ export function Settings({
           : definition.title ?? row.id
       const descriptionKey = PANEL_DESCRIPTION_KEYS[row.id]
       const description = definition === undefined
-        ? t('settings-panels-unclaimed')
-        : definition.source === 'plugin'
-          ? t('settings-panels-plugin', { plugin: definition.pluginId ?? definition.id })
-          : descriptionKey !== undefined ? t(descriptionKey) : ''
+        ? t(isLegacyAnonymousSidePanelId(row.id) ? 'settings-panels-legacy-anonymous' : 'settings-panels-unclaimed')
+        : isTemporarySidePanelId(row.id)
+          ? t('settings-panels-temporary', { n: String(registered.get(row.id)?.registrationId ?? '') })
+          : definition.source === 'plugin'
+            ? t('settings-panels-plugin', { plugin: definition.pluginId ?? definition.id })
+            : descriptionKey !== undefined ? t(descriptionKey) : ''
       entries.push({
         key: `panel-toggle:${ns}:${row.id}`,
         lines: 1,

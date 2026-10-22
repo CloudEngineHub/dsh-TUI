@@ -1,6 +1,8 @@
 # Interaction and Commands
 
 [Documentation index](README.md) · [简体中文](interaction.md)
+`Ctrl+Q` folds running todos; while idle it hides/restores the goal/todo footer. Clicking the idle todo header hides it too. New goal/todo data or another session shows it again. Completed goals leave the footer once idle; their history remains in the Todo side panel.
+
 
 ## Input and global shortcuts
 
@@ -160,7 +162,7 @@ results back to the chat screen and add no new behavior.
 | `Ctrl+Left/Right` / `Alt/Option+Left/Right` | Move by whitespace-delimited words; also supported on the launchpad |
 | `Home/End` | Move to the start/end of the current logical line |
 | `Ctrl+A` / `Ctrl+E` | `Ctrl+A` opens the subagent dashboard (`Mod+A` in the editor still moves to line start); `Ctrl+E` moves to line end and also expands or folds hidden older rows in long transcripts |
-| `Ctrl+U` | Delete before the caret |
+| `Ctrl+U` | Delete to the current line start, preserving text to the right; also supported in the focused launchpad input, with image chips removed whole |
 | `Ctrl+K` | Delete after the caret |
 | `Ctrl+W` / `Alt/Option+Backspace` | Delete the preceding word; staged image attachments are removed whole |
 | `Backspace` / `Delete` | Delete the character before / after the caret; **with a selection, delete the whole selection** |

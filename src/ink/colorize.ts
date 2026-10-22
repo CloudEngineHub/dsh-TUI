@@ -9,15 +9,24 @@ import type { Color, TextStyles } from './styles.js'
  * through to the -256color regex → level 2. At level 2, chalk.rgb()
  * downgrades to the nearest 6×6×6 cube color: rgb(215,119,87) → idx 174 rgb(215,135,135) — washed-out salmon.
  *
- * Gated on level === 2 (not < 3) to respect NO_COLOR / FORCE_COLOR=0 —
- * those yield level 0 and are an explicit "no colors" request. Desktop VS
- * Code sets COLORTERM=truecolor itself, so this is a no-op there (already 3).
+ * Windows Terminal has had truecolor since 2019 and sets WT_SESSION instead
+ * (forwarded into WSL), but neither COLORTERM nor TERM_PROGRAM; the same 256
+ * round-trip there collapses every dark diff/card tint onto one grey.
  *
- * Must run BEFORE the tmux clamp — if tmux is running inside a VS Code
- * terminal, tmux's passthrough limitation wins and we want level 2.
+ * Gated on level === 2 (not < 3) to preserve FORCE_COLOR=0 (level 0) and
+ * already-detected truecolor. NO_COLOR keeps chalk's existing detection
+ * semantics; this module does not add a separate NO_COLOR policy. Desktop
+ * VS Code sets COLORTERM=truecolor itself, so this is a no-op there (already 3).
+ * An explicit FORCE_COLOR=2 is a caller asking for 256 colors, so neither
+ * VS Code nor Windows Terminal overrides it.
+ *
+ * Must run BEFORE the tmux clamp — inside either truecolor host, tmux's
+ * passthrough limitation wins and we want level 2.
  */
 function boostChalkLevelForXtermJs(): boolean {
-  if (process.env.TERM_PROGRAM === 'vscode' && chalk.level === 2) {
+  const truecolorHost = process.env.TERM_PROGRAM === 'vscode'
+    || Boolean(process.env.WT_SESSION)
+  if (truecolorHost && process.env.FORCE_COLOR !== '2' && chalk.level === 2) {
     chalk.level = 3
     return true
   }
@@ -56,8 +65,8 @@ function clampChalkLevelForTmux(): boolean {
 }
 // Computed once at module load — terminal/tmux environment doesn't change mid-session.
 // Order matters: boost first so the tmux clamp can re-clamp if tmux is running
-// inside a VS Code terminal. Exported for debugging — tree-shaken if unused.
-/** Whether chalk's color level was boosted to 3 for xterm.js terminals. */
+// inside either truecolor host. Exported for debugging — tree-shaken if unused.
+/** Whether chalk's color level was boosted to 3 for VS Code or Windows Terminal. */
 export const CHALK_BOOSTED_FOR_XTERMJS = boostChalkLevelForXtermJs()
 /** Whether chalk's color level was clamped to 2 for tmux passthrough. */
 export const CHALK_CLAMPED_FOR_TMUX = clampChalkLevelForTmux()
@@ -269,6 +278,18 @@ const SGR_OPEN_MARKER = '\u0000'
 export function backgroundOpenCode(color: Color | undefined): string {
   if (!color) return ''
   const styled = colorize(SGR_OPEN_MARKER, color, 'background')
+  const end = styled.indexOf(SGR_OPEN_MARKER)
+  return end <= 0 ? '' : styled.slice(0, end)
+}
+
+/**
+ * The opening SGR for a raw foreground color, without text or a reset.
+ * @param color - raw color; missing or disabled colors yield an empty string.
+ * @returns the capability-aware foreground opening sequence.
+ */
+export function foregroundOpenCode(color: Color | undefined): string {
+  if (!color) return ''
+  const styled = colorize(SGR_OPEN_MARKER, color, 'foreground')
   const end = styled.indexOf(SGR_OPEN_MARKER)
   return end <= 0 ? '' : styled.slice(0, end)
 }

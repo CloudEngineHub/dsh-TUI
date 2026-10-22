@@ -789,6 +789,7 @@ for (const config of [
     sessions: [
       ...sessions,
       session({ id: 'other-newest', cwd: betaDir, updatedAt: now }),
+      session({ id: 'archived-newest', archived: true, updatedAt: now + 3 }),
       session({ id: 'empty-newest', hasPrompt: false, updatedAt: now + 1 }),
       session({ id: 'child-newest', kind: { kind: 'subagent', parent: 'free-one', depth: 1 }, updatedAt: now + 2 }),
     ],

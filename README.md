@@ -23,8 +23,21 @@
 > DSH's public exports, and is moving from a mounted plugin to an app with its
 > own entry and composition root, where DSH loads in process as the first-party
 > backend. Install to enable; uninstall leaves no patches behind.
+The prompt footer hides completed goals once the turn is idle; the Todo side panel retains their history. `Ctrl+Q` folds todos while working and hides/restores the idle goal/todo footer. Clicking its todo header also hides it while idle. Hiding changes only this display: a new goal/todo snapshot or session reveals it again, and `/goal clear` does not clear todos.
+
+Split diff cards give one-sided additions and deletions the full body width, without an empty opposite pane. Ordinary edits remain side by side, and mixed files choose their layout separately before folding or streaming reveal.
+
+Compaction status stays on one line in narrow panes: phase and cancellation hints yield first, then the label is shortened; elapsed time is shown only as a complete field.
+
+Image files referenced with `@path` use the same admission and resize/conversion policy as pasted images. Adjustment notices report the stored dimensions and format; required animation conversion is refused instead of dropping frames. Mention images and staged images still share count and stored-byte limits in source order.
+
 
 ## Highlights
+
+Panels without a verified Component identity are temporary: settings show their title and a distinct number for this run. Their toggles take effect immediately without being saved, and unrelated settings changes preserve that choice. Old `actN:panel` entries cannot be mapped safely: remove the placeholder and select the current panel again. Verified Components named `actN` keep their public runtime address; an explicit selection uses `component:actN:panel` in saved preferences to avoid claiming an old anonymous entry.
+
+Resuming a DSH session preserves its recorded reasoning effort (or its live selection when reattaching). The saved default seeds new sessions; explicit `/effort` and effort-default settings changes still apply to the current session’s next request.
+
 
 - **Pixel whale pet** — three startup intros, click to wake; freezes after the first task.
 - **Launchpad and first-run guide** — every ordinary launch lands on a landing page with a **real input box** (big text + whale + quick actions, dropping whole blocks on short/narrow terminals; whale-girl images use a compact native-canvas footprint instead of leaving a large gap before the title; on by default — /settings `launchpad` off boots straight into chat); command completion matches chat: `Tab` fills the input, `Enter` runs the command and clears it. The first run walks a four-step wizard (API key / language+theme / model+workspace / shortcuts), re-runnable with `/setup`.
@@ -49,6 +62,11 @@
 - **Built for long sessions** — event-driven projection, virtualization, bounded caches.
 
 Keys and commands: [Interaction and commands](docs/interaction.en.md). Everything else: [documentation index](docs/README.md).
+
+Plugin side panels stay enabled when unrelated settings change. Editing the enabled panel list still applies your explicit selection.
+
+
+Workspace side-panel counts match the session manager: the current conversation counts; empty logs, subagents, fork ancestors and archived sessions do not. Registered workspaces with no visible conversations remain at zero. Loading and read errors are shown separately; press `r` to refresh.
 
 ## Preview
 
@@ -300,7 +318,9 @@ the default home; reconnect it in the active home if needed. Provider
 `env_key` credentials retain the fallback described above.
 
 TPS includes hidden reasoning time and excludes tool execution time. Live
-text estimates are corrected when Codex reports output token usage.
+text estimates are corrected when Codex reports output token usage. Decode
+spans of 500ms or less are excluded from TPS samples; token and cost totals
+still include all reported usage.
 
 Native browsing/archive, fork/conversation rewind (the first message requires
 Codex app-server 0.160.1+), paged history, images,
@@ -366,10 +386,18 @@ Limits: the switch covers the whole profile, not one session (a launch
 without the profile plugin service, or without hot reload, needs `dsh plugin`
 and a restart); there is no "enter teammate session" yet, and `/export` leaves team messages out. Upstream limits apply: teammates share one working directory, a
 team lives in one process, and a task owner is never released automatically.
+Subagent failure badges and the Companion error state share session-scoped unread
+status. Opening that child’s detail or main view acknowledges only that failure;
+a new run or failure alerts again. Acknowledgements survive panel remounts and
+session switches during this process, but a cold restart starts unread. Opening
+the dashboard alone does not acknowledge every child. Task status stays failed.
+
 
 ## Keybindings & Mouse
 
 `Enter` send · `Tab` complete · `Ctrl+Enter` interrupt and send · `Alt+Up` recall the last message · `Esc` closes local layers before interrupting a running turn, double-`Esc` rewinds on empty idle input · `Ctrl+B` side panel · `Ctrl+O` details · `Ctrl+R` history (`↑`/`↓` and `Ctrl+R` are scoped to the current project) · `Ctrl+V` paste · `Ctrl+Shift+E` fullscreen draft editor · `?` shortcuts · `←` open the session manager (DSH backgrounds the current session first).
+In both the launchpad and chat, `Ctrl+U` deletes from the caret to the current line start, preserving text to the right and whole image chips. It edits only the focused input.
+
 
 In both the launchpad and chat, `Alt/Option+←/→` moves by whitespace-delimited words and `Alt/Option+Backspace` deletes the previous word, like `Ctrl+W`. On macOS, configure your terminal to send Option as Meta.
 
@@ -378,6 +406,8 @@ Text, cursor position and staged image attachments on the launchpad or in chat w
 The goal bar stays on one summary line: hovering truncated goal text in fullscreen or split shows the whole objective, and a bare `/goal` prints the full status — objective, phase, rounds or budget, available commands — as a transcript block in the `/plugins` shape. Inline mode sees no pointer events, so that block is how its users read a long objective.
 
 While the model is working: `Enter` steers, `Tab` queues a follow-up, `Ctrl+Enter` interrupts and sends. Input that names a command is still a command — with or without arguments — so `/model` or `/new` reach their own gate (and the `/` overlay sinks the commands that affect the running conversation) instead of silently becoming an interruption; only text that is not a command — and a direct skill gesture such as `/skill-name …` — steers.
+Windows Neovim/Vim terminals identified by `NVIM` or `VIM_TERMINAL` retain VT input instead of enabling ConPTY mode 9001. For another incompatible embedded host, set `DSH_TUI_DISABLE_WIN32_INPUT_MODE=1` before launch (PowerShell: `$env:DSH_TUI_DISABLE_WIN32_INPUT_MODE="1"`). The same gate applies at startup and after resume. Native Windows Terminal, conhost and VS Code keep their existing mode unless disabled; the opt-out can remove modified-Enter reporting.
+
 
 On native Windows, fragmented Win32 input records are reassembled across short input delays instead of appearing as numeric protocol text. The platform check only reports that this machine might run the private mode (win32-input-mode); a bare `ESC[` fragment is held only after one record has actually been decoded, while a fragment whose own shape is already record-specific holds on its own (which is how even the first record can survive a split). Windows terminals that never enter the mode (mintty, GitBash) therefore keep the classic VT path: a lone `Esc` keeps its normal response time, and a letter typed after a timed-out `ESC[` is not swallowed.
 
@@ -394,6 +424,8 @@ The window is bounded like the record hold (about a second, never extended by la
 Inside that window, with a query of the matching response type outstanding, same-shaped literal input can still be claimed as a reply; to type it, wait for the window to close (about a second), or avoid that shape while a query is outstanding.
 
 Fragmented SGR mouse reports no longer land in the prompt as text: an incomplete report header is held until the rest arrives, and a report that completes is handled as a mouse event. The hold is armed only while mouse reporting is actually active (fullscreen, with mouse tracking enabled); inline sessions and terminals that never enable tracking keep the existing behavior. The claim window is bounded from first capture (at most 1 second; 64 bytes max), and a continuation arriving inside it is still claimed rather than replayed. Release has no timer: once a parse call sees either bound exceeded, it replays the held bytes as ordinary keys in arrival order — literal input can be delayed, but is never dropped.
+A completed text-only assistant reply containing only a leading `⏵` status line remains visible in the conversation and can be selected for copying. Live status lines and status lines followed by a real answer stay out of the transcript body.
+
 
 Mouse (fullscreen): drag to select and copy, double/triple click to select a word or line, click tool cards, timeline ticks and `[Image #N]` previews.
 
@@ -408,6 +440,15 @@ File paths in prose can open the file-action menu; automatic detection does not 
 **Pasting**: the launchpad accepts clipboard images and pasted image paths as `[Image #N]` attachments; `Enter` sends them with the first message. Commands that do not accept images preserve the draft and its attachments. Image chips behave like chat: arrows step across them, Backspace at the end or Delete at the start removes the whole image, and Ctrl+W never splits a chip. Text pasted on the launchpad is folded to one line. In chat, native and bracketed paste keeps ordinary text and newlines, and never submits itself on arrival. On Windows terminals that deliver a paste as win32-input-mode key records, a record stream leaked into the payload is decoded back into the characters its `Uc` field encodes — newlines included — so the composer's line count matches what was pasted; only records with no character meaning are stripped (a multi-line paste no longer leaves stray `_`), and a complete record is always consumed before an ESC-less tail, so no payload character is deleted along with an orphan escape. Pasted CRLF collapses to a single newline; genuine underscores and bracketed-paste text are untouched.
 
 **Dropped files**: a native Windows desktop drop (Windows Terminal / OpenConsole) arrives as an OSC 8 hyperlink; the parser restores its `file://` URI to a decoded local path before paste hygiene runs, so the `]8;id=…;` parameter bytes never reach the draft. Image paths enter the existing image staging pipeline; other files are inserted as a referenceable path (a path containing whitespace arrives in the composer's quoted `"…"` single-token form). Only `file://` URIs are restored, and it is fail-closed: a remote authority/UNC, a payload carrying several distinct URIs, or a URI that carries several tokens is refused and stays literal text rather than guessed.
+Fullscreen drag-copy uses the final highlight. If a live row changed during a drag,
+move the selection back to stable text to establish a new baseline. A stationary
+selection whose copied text changes is still refused; automatic scroll/resize
+does not clear that protection.
+
+The pixel whale, large title and context/TPS colors follow the same terminal color depth as other text: monochrome, 16-color, 256-color or truecolor. Apple Terminal and tmux use the shared fallback; `NO_COLOR` and `FORCE_COLOR` retain the existing shared color policy.
+
+If resume reports that another DSH process owns the writer, release the session in that process (for example, dsh web) and retry in the same TUI. The foreground session stays intact; do not delete session or lock files to bypass single-writer protection.
+
 
 Full reference: [Interaction and commands](docs/interaction.en.md).
 
@@ -464,6 +505,9 @@ Runtime path, module boundaries, performance notes and persistence locations: [A
 - Injected plugin context has no standalone display; it counts into the context segments.
 - `/model` changes the next request’s route in the same session; history and session ID are preserved. The last used route is recorded when the next request starts. DSH versions before `0.1.2-alpha.3` refuse switching and prompt an upgrade because their subagents inherit the original route.
 - `Ctrl+V` needs platform clipboard tools; unsupported bitmap formats are rejected.
+- Local Windows copying uses PowerShell with UTF-8 stdin. Copies run in order; each PowerShell attempt has a two-second timeout (Windows PowerShell, then PowerShell 7). If both fail, OSC 52 remains the fallback and requires terminal support. SSH never writes the remote native clipboard.
+- Catchable exits explicitly end synchronized output (DEC 2026) as part of terminal cleanup, even without a final frame. SIGKILL, native aborts and a fully blocked JavaScript event loop cannot guarantee in-process cleanup; recovery then requires the terminal or an external supervisor.
+- While the TUI owns an active raw input, it reasserts OS raw mode on input-gap/focus recovery and every five seconds without waiting for a key. This repairs externally reset cooked/ECHO state even when Node still reports `isRaw=true`; recovery may take one interval while the event loop runs. The periodic check stops during editor pauses and shutdown/handoff and does not resend display protocols.
 - A dropped file is restored from its OSC 8 `file://` URI alone: multi-file drops, non-Windows terminal drop encodings and terminator-less truncated frames are not covered, and the hyperlink's own display name is never used.
 - A background session lives inside this process and stops when the TUI exits.
 - `/thinking` is not persisted; the kernel `minimal` agent preset (极简模式, one persistent-shell tool) mounts no compaction and does not prune tool results — a long session can hit the context limit, oversized tool output stays in the context in full, and `/compact` plus the questionnaire are unavailable under it (Help and `/` completion mark the entry, and entering the preset says so once); that is a different thing from the `/settings → Minimal UI` (极简界面) display switch; `/update` needs a `dsh --profile` launch and is refused while a turn is running.
@@ -473,6 +517,21 @@ Runtime path, module boundaries, performance notes and persistence locations: [A
 Full list: [Architecture and limitations → Known limitations](docs/architecture.en.md#known-limitations).
 
 ## Development
+The monorepo development host (`pnpm tui`, `scripts/run.ts`) enables heap
+forensics only with `DSH_TUI_HEAP_WATCH=1`; unset it or use `0` to disable it.
+It samples every 15 seconds and takes one snapshot at each heap threshold of
+1024, 1536, 2048, 2560 and 3072 MiB. Its own completed files in `$DSH_HOME`
+retain at most four 64-KiB logs and two snapshots totaling at most 1024 MiB.
+`DSH_TUI_HEAP_MAX_MB` changes the snapshot budget (integer 1–16384; invalid
+values use 1024). A single oversized snapshot is removed too; the latest
+diagnostic may therefore be a log only. Snapshot creation still blocks and
+uses extra memory and temporary disk space; this does not fix memory leaks.
+Files use a process-unique `dsh-tui-heap-watch-` prefix. Manual/legacy files
+are untouched; incomplete `.writing` files are removed only after their
+owner PID is confirmed absent. Live or uncheckable owners are preserved,
+and cleanup failures are nonfatal, so quotas apply to successful cleanup of
+completed files, not peak usage or uncertain crash leftovers.
+
 
 CI uses Node 24 and pnpm 11. The package supports Node `^22.19 || >=24`.
 

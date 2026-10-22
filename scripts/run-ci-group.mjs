@@ -100,6 +100,9 @@ const GROUPS = {
 // 代码块 tab 缩进背景回归（issue #606）：tab 展开须继承单元格样式，否则
 // 无背景的空格被 diff 跳过，在 tmux/Windows Terminal 深色底下显示为黑块。
     ["verify-code-block-tab-background", ['node', '--import', 'tsx/esm', 'scripts/verify-code-block-tab-background.tsx']],
+// chalk 色深探测：VS Code / Windows Terminal（WT_SESSION）从 256 色提到真彩，
+// tmux 仍钳回 256——否则暗色 diff/卡片底色全部塌缩成同一灰阶。
+    ["verify-chalk-truecolor-boost", ['node', '--import', 'tsx/esm', 'scripts/verify-chalk-truecolor-boost.ts']],
 // 思考块流式视图回归：preview 固定三行且点击切全文/再点收回，full
 // 默认值反向但仍不进入 0 行正文；增量 Markdown 与整段渲染的块间距
 // 一致（真实段落空行保留，代码块后不凭空多一行）。
@@ -207,6 +210,7 @@ const GROUPS = {
     ['verify-animation-ownership', ['node', '--import', 'tsx/esm', 'scripts/verify-animation-ownership.tsx']],
 // 开屏头部契约：大字 5 行高且等宽（8×7 = 7×8）、bigTextWidth 与实际画出的列数
 // 一致；窄终端按「鲸鱼+大字 → 纯大字 → 纯鲸鱼 → 纯文字」逐档降级，档位无空档。
+    ['verify-raw-color-depth', ['node', 'scripts/verify-raw-color-depth.mjs']],
     ["verify-splash-layout", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-layout.ts']],
 // 开屏彩蛋契约：节日换词（每款字体都要有 HAPPINESS/MERRY/NEW YEAR 的全部字形，
 // 两行等宽 + 下排居中取最紧解）与 1/20 的求 star 标语（OSC 8 成对 + URL 正确、
@@ -333,6 +337,7 @@ const GROUPS = {
 // 自点亮、attention 阻止入睡、celebration 到期回落、activity 缺失/done/idle
 // 退 spinnerMode、sleepAfterMs=0 永不睡）+ stepCompanionMood 的 since 保留与
 // bubble 取值（phrase 优先、label+detail 兜底、idle/sleeping 无 bubble）。
+    ['verify-subagent-failure-read', ['node', '--import', 'tsx/esm', 'scripts/verify-subagent-failure-read.ts']],
     ["verify-companion-mood", ['node', '--import', 'tsx/esm', 'scripts/verify-companion-mood.mjs']],
 // Companion pose 层：nextCompanionPoseStep 对 nextWhaleIdleStep 的帧级 parity
 // （8 mood × heart × 50 步 pose+state+delay 逐项相等）、gestures 集合由层姿态
@@ -418,6 +423,7 @@ const GROUPS = {
     ["verify-drag-protocol", ['node', '--import', 'tsx/esm', 'scripts/verify-drag-protocol.tsx']],
 // 全屏拖选自动复制后保留选区，重复 release 不重复复制；选区高亮跳过
 // 行尾填充/空白行，并保留代码缩进、软换行分隔空格和 Unicode 字符。
+    ['verify-selection-stale-guard', ['node', '--import', 'tsx/esm', 'scripts/verify-selection-stale-guard.tsx']],
     ['verify-copy-on-select', ['node', 'scripts/verify-copy-on-select.mjs']],
 // hover 事件性能与健壮性回归：同批 motion 保留兴趣边界（tooltip dwell
 // 不提前）、无兴趣矩形快路径跳过全树 hit-test，且渲染提交/帧边界/
@@ -426,6 +432,7 @@ const GROUPS = {
 // /update 纯函数回归：版本探测（双布局+外来 manifest 拒绝）、
 // registry 解析（env/npmrc/默认）、semver 比较、pnpm --latest。
     ["verify-update", ['node', 'scripts/verify-update.mjs']],
+    ['verify-heap-watch-retention', ['node', '--import', 'tsx/esm', 'scripts/verify-heap-watch-retention.ts']],
 // /update 恢复链路端到端回归（#479/#483）：假 dsh 按剧本重放 pnpm 失败
 // （Linux EEXIST 必现竞态、Windows 瞬时 ENOENT、真实 404），真实子进程
 // 走编译产物——验证陈旧安装清理后重跑成功、瞬时重试升级、真实失败不
@@ -462,6 +469,7 @@ const GROUPS = {
 // 图片导出权限（目录 0700/文件 0600）、空 vs unavailable、
 // 死 Wayland 会话回退 xclip。
     ["verify-clipboard", ['node', 'scripts/verify-clipboard.mjs']],
+    ['verify-windows-copy', ['node', 'scripts/verify-windows-copy.mjs']],
 // Ctrl+V UI 端到端回归（stub wl-paste）：帮助面板在读取前关闭、
 // 剪贴板文本落入输入框、busy 闩锁释放后第二次粘贴仍生效。
     ["repro-clipboard", ['node', '--import', 'tsx/esm', 'scripts/repro-clipboard.tsx']],
@@ -1269,6 +1277,7 @@ const GROUPS = {
 // /model 保留会话与自动标题资格；路由及其异步快照跟随停放中的 agent。
     ["verify-session-title-lineage", ['node', '--import', 'tsx/esm', 'scripts/verify-session-title-lineage.ts']],
     ["verify-model-route-lifetime", ['node', '--import', 'tsx/esm', 'scripts/verify-model-route-lifetime.ts']],
+    ["verify-model-lifecycle-fences", ['node', '--import', 'tsx/esm', 'scripts/verify-model-lifecycle-fences.ts']],
     ['verify-model-completion-invalidate', ['node', 'scripts/verify-model-completion-invalidate.mjs']],
     ["verify-session-v3", ['node', '--import', 'tsx/esm', 'scripts/verify-session-v3.ts']],
     ["verify-session-tree-generations", ['node', '--import', 'tsx/esm', 'scripts/verify-session-tree-generations.ts']],
@@ -1479,6 +1488,7 @@ const GROUPS = {
 // 注明、剥后路径未命中时回退字面路径（真叫 `…#L…` 的文件按整文件附加
 // 且模型看到字面路径）、双 miss 报用户原文、无后缀行为不变、目录忽略
 // 后缀。内存 fs stub，expandMentions 纯扩展逻辑。
+    ["verify-image-downsample", ['node', '--import', 'tsx/esm', 'scripts/verify-image-downsample.tsx']],
     ["verify-mention-lines", ['node', '--import', 'tsx/esm', 'scripts/verify-mention-lines.ts']],
 // 问卷 provider 抢注守卫回归（issue #98 安全收尾）：静默让位只授予宿主
 // 可验证的白名单在位者（本 TUI 的私有 symbol 标记）；在位者【自报】的

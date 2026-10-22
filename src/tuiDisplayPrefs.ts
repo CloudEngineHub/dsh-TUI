@@ -495,6 +495,23 @@ export const applyImageBacking = imageBackingStore.apply
 /** Panel id grammar (plugins register under a `plugin:sub` namespace). */
 export const SIDE_PANEL_ID_PATTERN = /^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)*$/
 
+/** Anonymous activations have no durable identity. Three segments cannot
+ * collide with a verified Component's two-segment panel address. */
+export function isTemporarySidePanelId(id: string): boolean {
+  return /^session:act[0-9]+:[a-z][a-z0-9_-]*$/u.test(id)
+}
+
+/** Old anonymous addresses cannot be attributed to a past activation. */
+export function isLegacyAnonymousSidePanelId(id: string): boolean {
+  return /^act[0-9]+:[a-z][a-z0-9_-]*$/u.test(id)
+}
+
+/** Encode only verified registered Component ids when writing preferences.
+ * Runtime addresses remain unchanged; bare actN CSV entries stay unclaimed. */
+export function persistentSidePanelId(id: string): string {
+  return isLegacyAnonymousSidePanelId(id) ? 'component:' + id : id
+}
+
 export const DEFAULT_SIDE_PANEL_IDS = 'todo,jobs,agents,info,trajectory,workspace,btw,companion'
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {

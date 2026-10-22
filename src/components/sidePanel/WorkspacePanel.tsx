@@ -6,6 +6,7 @@ import type { ClickEvent } from '../../ink/events/click-event.js'
 import { truncateWidth, spreadRow } from '../../sessions/format.js'
 import { stringWidth } from '../../ink/stringWidth.js'
 import { normalizeWorkspaceCwd } from '../../sessions/view.js'
+import { visibleWorkspaceSessions, workspaceSessionCounts } from '../../sessions/workspaceCounts.js'
 import type { TuiWorkspaceEntry } from '../../adapter/ports/channel-workspace.js'
 import { useSidePanelChannel, useSidePanelFullscreen } from './SidePanelRuntimeContext.js'
 import { usePanelInput } from './usePanelInput.js'
@@ -74,22 +75,33 @@ export function WorkspacePanel({ width, height, focused, visible }: PanelProps):
     setFetchTick(tick => tick + 1)
   }, [visible])
   React.useEffect(() => {
-    if (fetchTick === 0) return
+    if (fetchTick === 0 || visible === false) return
     const nonce = nonceRef.current + 1
     nonceRef.current = nonce
     let live = true
+    const bindingGeneration = channel.agentBindingGeneration
+    const agentId = channel.agentId
+    const sessionId = channel.sessionId
+    const cwd = channel.cwd
+    const backendId = channel.backendCapabilities?.backendId
+    const current = (): boolean => live && nonce === nonceRef.current
+      && channel.agentBindingGeneration === bindingGeneration
+      && channel.agentId === agentId && channel.sessionId === sessionId
+      && channel.cwd === cwd && channel.backendCapabilities?.backendId === backendId
     setLoadError(null)
-    channel.listWorkspaceRegistry()
-      .then(list => {
-        if (!live || nonce !== nonceRef.current) return
-        setEntries(list)
+    setEntries(null)
+    Promise.all([channel.listWorkspaceRegistry(), channel.listSessions()])
+      .then(([list, sessions]) => {
+        if (!current()) return
+        const counts = workspaceSessionCounts(visibleWorkspaceSessions(sessions, agentId))
+        setEntries(list.map(entry => ({ ...entry, sessionCount: counts.get(normalizeWorkspaceCwd(entry.path)) ?? 0 })))
       })
       .catch((error: unknown) => {
-        if (!live || nonceRef.current !== nonce) return
+        if (!current()) return
         setLoadError(error instanceof Error ? error.message : String(error))
       })
     return () => { live = false }
-  }, [channel, fetchTick])
+  }, [channel, fetchTick, visible, channel.agentBindingGeneration, channel.agentId, channel.sessionId, channel.cwd, channel.backendCapabilities?.backendId, channel.ready])
 
   // ── 选中 / hover / 自管窗口滚动 ──────────────────────────────────────────
   // 不用 ScrollBox：它的内容平移/裁剪会让滚动后的指针事件错位

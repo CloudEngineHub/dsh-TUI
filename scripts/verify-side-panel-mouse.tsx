@@ -65,6 +65,7 @@ const channelStub: unknown = {
   tokens: { input: 1_000, output: 100, cacheRead: 0, cacheWrite: 0 },
   contextWindow: 128_000,
   listWorkspaceRegistry: () => Promise.resolve([]),
+  listSessions: () => Promise.resolve([]),
   subscribe() { return () => {} },
   notify() {},
 }

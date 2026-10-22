@@ -2,7 +2,7 @@
  * Admission loader (src/dsh-adapter/admission-loader.ts) on a real Cordis
  * composition: a row whose package carries `dsh-plugin.json` registers its
  * panel under the manifest id when armed (absolute and bare specifiers) and
- * under `act<N>` when not; a missing `tuiPluginHost` settles refused, bounded.
+ * under session-only `session:act<N>` when not; a missing `tuiPluginHost` settles refused, bounded.
  * fake-home must load first: the plugin-host row writes the effect ledger.
  *
  * Run: node --import tsx/esm scripts/verify-admission-loader.ts
@@ -100,13 +100,14 @@ interface MountedComposition {
 }
 
 /** One composition: the loader, the real plugin-host row, tuiPanels. `withHost` false models issue #183. */
+let compositionSequence = 0
 async function mount(
   armed: boolean,
   retryAttempts?: number,
   withHost = true,
   baseUrl = pathToFileURL(join(dir, 'cordis.yml')).href,
 ): Promise<MountedComposition> {
-  const report = join(dir, `${armed ? 'armed' : 'control'}-report.jsonl`)
+  const report = join(dir, `${armed ? 'armed' : 'control'}-${++compositionSequence}-report.jsonl`)
   writeFileSync(report, '')
   const root = new Context()
   root.logger.warn = () => undefined
@@ -127,10 +128,10 @@ function reportedIds(report: string): string[] {
 
 async function activate(composition: MountedComposition, id: string): Promise<string> {
   const entry = writePackage(id)
+  const previousReports = readFileSync(composition.report, 'utf8').split('\n').filter(Boolean).length
   await composition.root.loader.create({ id, name: entry, config: { report: composition.report } })
   await composition.root.loader.await()
-  // 固定窗:pacing 行 apply 后的落盘报告没有可轮询锚点（reportedIds 要等 appendFileSync）
-  await sleep(400)
+  check('activation report arrived: ' + id, await settled(() => readFileSync(composition.report, 'utf8').split('\n').filter(Boolean).length > previousReports))
   return readFileSync(composition.report, 'utf8')
 }
 
@@ -162,8 +163,9 @@ const control = await mount(false)
 await activate(control, 'verify-anonymous')
 const controlIds = reportedIds(control.report)
 check('control: the plugin applied and registered its panel', controlIds.length === 1, JSON.stringify(controlIds))
-check('control: without the loader the panel falls back to the act<N> namespace',
-  controlIds.length === 1 && /^act\d+:demo$/u.test(controlIds[0]))
+check('control: without the loader the panel falls back to the session-only namespace',
+  controlIds.length === 1 && /^session:act\d+:demo$/u.test(controlIds[0]))
+await control.root.fiber.dispose()
 
 // ── armed: the real armAdmissionLoader on the composition ─────────────────
 const armed = await mount(true)
@@ -207,6 +209,7 @@ check('nested id: an unresolvable entry id does not tear the loader down',
   nestedThrew === undefined, nestedThrew ?? '')
 check('nested id: the other activation on the same composition is still admitted',
   readFileSync(nested.report, 'utf8').includes('verify-after-nested:demo'), readFileSync(nested.report, 'utf8'))
+await nested.root.fiber.dispose()
 
 // Unloading the row must release its identity, so re-activation is admitted again.
 const entryId = 'verify-admitted'
@@ -217,6 +220,97 @@ await sleep(200)
 const again = await activate(armed, 'verify-admitted-2')
 check('armed: a fresh activation is admitted again (identity is per-activation)',
   readFileSync(armed.report, 'utf8').includes('verify-admitted-2:demo') || again.includes('verify-admitted-2:demo'))
+
+await armed.root.fiber.dispose()
+
+// A Component id and another Loader entry id may be identical. Exercise
+// both activation orders with distinct package/entry/manifest identities.
+let previousTemporary: string | undefined
+for (const reverse of [false, true]) {
+  const composition = await mount(true)
+  const panelPrefs = await import('../src/tuiDisplayPrefs.js')
+  const panelActions = await import('../src/dsh-adapter/panels.js')
+  panelActions.applyConfiguredSidePanelPanels(previousTemporary === undefined ? 'todo,act1:search' : 'todo,' + previousTemporary)
+  composition.report = join(dir, `collision-${reverse}.jsonl`)
+  writeFileSync(composition.report, '')
+  const packages = ['component', 'anonymous'].map(kind => {
+    const folder = join(dir, `collision-${reverse}-${kind}`)
+    mkdirSync(folder)
+    writeFileSync(join(folder, 'package.json'), JSON.stringify({ name: `verify-${kind}`, type: 'module' }))
+    writeFileSync(join(folder, 'main.js'), ENTRY_SOURCE.replace("id: 'demo'", "id: 'search'"))
+    if (kind === 'component') writeFileSync(join(folder, 'dsh-plugin.json'), manifestOf('verify-collision'))
+    return { id: kind === 'component' ? 'different-entry' : 'verify-collision', name: join(folder, 'main.js') }
+  })
+  try {
+    const ids: string[] = []
+    for (const entry of reverse ? [...packages].reverse() : packages) {
+      await composition.root.loader.create({ ...entry, config: { report: composition.report } })
+      await composition.root.loader.await()
+      check('collision fixture applied ' + entry.id, await settled(() => readFileSync(composition.report, 'utf8').split('\n').filter(Boolean).length > ids.length))
+      ids.push(...reportedIds(composition.report))
+    }
+    const temporary = ids.find(id => /^session:act[0-9]+:search$/u.test(id))
+    check('cross-source same name survives either order', ids.includes('verify-collision:search') && temporary !== undefined, JSON.stringify(ids))
+    check('Component identity comes from manifest, not Loader entry id', !ids.includes('different-entry:search'))
+    const registered = (await import('../src/components/sidePanel/PanelStore.js')).panelStore
+    const liveIds = () => panelPrefs.parseSidePanelIds(panelPrefs.getSidePanelPanels())
+    check('previous-run temporary preferences never become live entries', previousTemporary === undefined || !liveIds().includes(previousTemporary))
+    if (temporary !== undefined) {
+      panelActions.applySidePanelPanelsFromSettings('todo,verify-collision:search')
+      check('durable settings replay keeps temporary panel enabled', liveIds().includes(temporary))
+      panelPrefs.applySidePanelPanels(liveIds().filter(id => id !== temporary).join(','))
+      panelActions.applyConfiguredSidePanelPanels('todo,verify-collision:search')
+      check('same settings replay keeps manually closed temporary panel off', !liveIds().includes(temporary))
+      panelPrefs.applySidePanelPanels([...liveIds(), temporary].join(','))
+      previousTemporary = temporary
+    }
+    const componentEntry = composition.root.loader.resolve(reverse ? 'verify-collision' : 'different-entry') as { fiber?: { dispose?(): Promise<unknown> } } | undefined
+    await componentEntry?.fiber?.dispose?.()
+    check('unloading one owner leaves the other panel alive', temporary !== undefined && (reverse
+      ? registered.get(temporary) === undefined && registered.get('verify-collision:search') !== undefined
+      : registered.get(temporary) !== undefined && registered.get('verify-collision:search') === undefined))
+  } finally { await composition.root.fiber.dispose() }
+  const registered = (await import('../src/components/sidePanel/PanelStore.js')).panelStore
+  check('composition teardown removes only its remaining live contribution', registered.get('verify-collision:search') === undefined && (previousTemporary === undefined || registered.get(previousTemporary) === undefined))
+}
+{
+  // Exercise the legacy runtime identity contract without pretending act1 is
+  // a valid current manifest id (Community manifests require a namespace).
+  // Binding remains owned by the real Loader activation and its teardown.
+  const composition = await mount(true)
+  const identityModule = new URL('../src/dsh-adapter/component-identity.ts', import.meta.url).href
+  const protocolsModule = new URL('../src/adapter/standard/protocols.ts', import.meta.url).href
+  const legacyEntry = join(dir, 'legacy-identity.mjs')
+  writeFileSync(legacyEntry, `import { bindComponentIdentity } from ${JSON.stringify(identityModule)}
+import { parseManifest, projectManifest } from ${JSON.stringify(protocolsModule)}
+const manifest = parseManifest(${JSON.stringify(manifestOf('verify-legacy'))}, { source: 'test:legacy-identity' })
+const projection = projectManifest(manifest)
+${ENTRY_SOURCE.replace('const panels =', "bindComponentIdentity(ctx, manifest, { ...projection, metadata: { ...projection.metadata, name: 'act1' } }); const panels =")}`)
+  try {
+    const panels = await import('../src/dsh-adapter/panels.js')
+    const prefs = await import('../src/tuiDisplayPrefs.js')
+    panels.applyConfiguredSidePanelPanels('todo,component:act1:demo,jobs')
+    await composition.root.loader.create({ id: 'act1', name: legacyEntry, config: { report: composition.report } })
+    await composition.root.loader.await()
+    check('legacy Component activated', await settled(() => reportedIds(composition.report).length > 0))
+    check('late registration resolves saved encoding in place', prefs.getSidePanelPanels() === 'todo,act1:demo,jobs')
+    check('a genuine act1 Component keeps its public runtime address', reportedIds(composition.report)[0] === 'act1:demo')
+    const { applySidePanelPanelsFromSettings } = await import('../src/dsh-adapter/panels.js')
+    const { getSidePanelPanels, parseSidePanelIds } = await import('../src/tuiDisplayPrefs.js')
+    applySidePanelPanelsFromSettings('todo,act1:demo')
+    check('ambiguous old CSV cannot enable the real Component', !parseSidePanelIds(getSidePanelPanels()).includes('act1:demo'))
+    applySidePanelPanelsFromSettings('todo,component:act1:demo')
+    check('explicit preference maps to unchanged runtime id', parseSidePanelIds(getSidePanelPanels()).includes('act1:demo'))
+    check('encoded preference is not a runtime address', !parseSidePanelIds(getSidePanelPanels()).includes('component:act1:demo'))
+    const loaded = composition.root.loader.resolve('act1') as { fiber?: { dispose?(): Promise<unknown> } } | undefined
+    await loaded?.fiber?.dispose?.()
+    check('unload removes the public address without an encoded ghost', !parseSidePanelIds(getSidePanelPanels()).some(id => id === 'act1:demo' || id === 'component:act1:demo'))
+    panels.applyConfiguredSidePanelPanels('todo,component:act1:demo,jobs')
+    await composition.root.loader.create({ id: 'act1-reloaded', name: legacyEntry, config: { report: composition.report } })
+    await composition.root.loader.await()
+    check('re-registration resolves the saved encoding once', await settled(() => parseSidePanelIds(getSidePanelPanels()).filter(id => id === 'act1:demo').length === 1 && !getSidePanelPanels().includes('component:')))
+  } finally { await composition.root.fiber.dispose() }
+}
 
 // ── armed + BARE specifier: the profile's real third-party row name ───────
 // The cases above use absolute paths; a profile row names a package, so the
@@ -257,6 +351,7 @@ for (const [name, manifestId] of [[BARE_PACKAGE, 'verify-bare'], [EXPORTS_PACKAG
   check(`bare specifier ${name}: the row applied and registered its panel`, bareIds.length === 1, JSON.stringify(bareIds))
   check(`bare specifier ${name}: the manifest id is found through the package-root walk`,
     bareIds.length === 1 && bareIds[0] === `${manifestId}:demo`, JSON.stringify(bareIds))
+  await bare.root.fiber.dispose()
 }
 
 // Exported subcomponents must use the nearest package manifest, just like an absolute entry.
@@ -313,7 +408,7 @@ for (const boundary of [false, true]) {
     await composition.root.loader.await()
     const applied = await settled(() => reportedIds(composition.report).length > 0)
     const id = reportedIds(composition.report)[0] ?? ''
-    check('stray manifest: ' + suffix + ' respects the nearest package boundary', applied && (boundary ? /^act\d+:demo$/u.test(id) : id === 'verify-root-' + suffix + ':demo'), id)
+    check('stray manifest: ' + suffix + ' respects the nearest package boundary', applied && (boundary ? /^session:act\d+:demo$/u.test(id) : id === 'verify-root-' + suffix + ':demo'), id)
   } finally { await composition.root.fiber.dispose() }
 }
 
@@ -327,7 +422,7 @@ try {
   await withoutResolver.root.loader.create({ id: 'without-resolver', name, config: { report: withoutResolver.report } })
   await withoutResolver.root.loader.await()
   const applied = await settled(() => reportedIds(withoutResolver.report).length > 0)
-  check('missing active resolver: execution continues without guessed component authority', applied && /^act\d+:demo$/u.test(reportedIds(withoutResolver.report)[0] ?? ''), JSON.stringify(reportedIds(withoutResolver.report)))
+  check('missing active resolver: execution continues without guessed component authority', applied && /^session:act\d+:demo$/u.test(reportedIds(withoutResolver.report)[0] ?? ''), JSON.stringify(reportedIds(withoutResolver.report)))
 } finally {
   withoutResolver.root.loader.internal = savedResolver
   await withoutResolver.root.fiber.dispose()
@@ -364,6 +459,7 @@ try {
   check('host-missing: no further tick after it settled (the loop stopped)',
     refusals().length === ticksAtSettle && debugLines.length === lineCountAtSettle,
     debugLines.slice(lineCountAtSettle).join(''))
+  await hostless.root.fiber.dispose()
 } finally {
   delete process.env.DSH_TUI_DEBUG
   process.stderr.write = stderrWrite

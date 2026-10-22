@@ -143,7 +143,7 @@ TUI bundle 继承已安装 DSH 官方组合的上报配置；上游未提供的�
 | `sidePanel.splitEnabled` | `true`（布尔） | 分栏总开关：开启时 `Ctrl+B` 与 `/panel` 在聊天右侧展开侧栏；关闭时两者都不再分栏，`/jobs` 等仍走整屏面板。立即生效 |
 | `sidePanel.open` | `false`（布尔） | 启动时侧栏是否已展开；默认关闭，升级后布局与原来一致。会话内的 `Ctrl+B` / `/panel toggle` 不写回这里。立即生效 |
 | `sidePanel.ratio` | `0.68`（数值，0.1–0.95） | 聊天列占内容宽度的比例；侧栏有焦点时 `+`/`-` 在当前会话内实时微调（不写回）。立即生效 |
-| `sidePanel.panels` | `todo,jobs,agents,info,trajectory,workspace,btw,companion`（逗号分隔文本） | 默认启用全部 8 个内置面板；这里控制面板 id 与顺序。格式合法但暂无面板认领的 id 会留在标签栏等插件注册，格式非法的条目被拒绝。面板栏右端的 `⤢` 把当前面板放大成整屏（只对声明了整屏形态的面板出现）。立即生效 |
+| `sidePanel.panels` | `todo,jobs,agents,info,trajectory,workspace,btw,companion`（逗号分隔文本） | 默认启用全部 8 个内置面板；这里控制面板 id 与顺序。格式合法但暂无面板认领的 id 会留在标签栏等插件注册，格式非法的条目被拒绝。面板栏右端的 `⤢` 把当前面板放大成整屏（只对声明了整屏形态的面板出现）。立即生效 临时插件面板显示标题与本次运行编号，勾选仅当前运行生效且不保存；旧 `actN:panel` 占位项应移除后重选。名为 `actN` 的可信 Component 保留运行时地址，仅在持久偏好中使用 `component:actN:panel`。 |
 | `companion.skin` | `deepy` | 宠物面板的皮肤：`deepy`（默认，deepy 小鲸鱼素材包）、`whaleGirl`（鲸娘表情包，22 个动画含互动反应）或 `whale`（与开屏同款分层像素鲸鱼）；面板默认启用，可在 `sidePanel.panels` 调整。**DeepSeek 品牌下，它同时决定开屏（标题）艺术槽**：宠物皮肤为 deepy 或 whaleGirl 时，该槽由对应吉祥物占据（像素鲸鱼与女仆娘立绘都不出现），「女仆娘立绘」（`whaleGirl`）开关不生效；把宠物皮肤设为 whale 才回到原路径（像素鲸鱼；打开「女仆娘立绘」后为立绘）。立即生效，另见下方的优先级小表 |
 | `btw.contextTurns` | `4`（数值，1–8） | `/btw` 追问时带上的最近已完成问答组数；更早的组不进请求，线程和面板里仍保留。立即生效 |
 | `btw.contextBudget` | `24000`（数值，1000–200000） | `/btw` 追问携带的最近问答总字符数上限，超出时从最旧的一组开始丢。立即生效 |

@@ -39,7 +39,7 @@ const [
   { panelStore },
   { registerBuiltinPanels },
   { SETTING_DEFINITIONS },
-  { SIDE_PANEL_ID_PATTERN },
+  { SIDE_PANEL_ID_PATTERN, applySidePanelPanels, getSidePanelPanels, isTemporarySidePanelId },
   { t },
   { settled, viewportLines },
 ] = await Promise.all([
@@ -125,7 +125,7 @@ function makeChannel(): unknown {
           const draft = text.trim()
           if (draft === '') return { kind: 'clear' as const }
           const tokens = draft.split(',').map(token => token.trim().toLowerCase()).filter(token => token !== '')
-          if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token))) return undefined
+          if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token) || isTemporarySidePanelId(token))) return undefined
           return { kind: 'set' as const, value: tokens.join(',') }
         },
       }],
@@ -297,6 +297,54 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   check('l unloaded plugin row leaves, its id degrades to a placeholder',
     await settled(() => !screen.has('Notes') && /[✓][^\n]*· demo:notes/.test(screen.view()), { timeoutMs: 4000 }))
   await screen.close()
+}
+
+// Temporary selections never enter the settings write path, even when
+// another durable checkbox is saved while the same picker stays open.
+{
+  const id = 'session:act900:notes'
+  const dispose = panelStore.register({ id, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act900' })
+  const otherId = 'session:act901:notes'
+  const disposeOther = panelStore.register({ id: otherId, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act901' })
+  applySidePanelPanels('todo,' + id + ',' + otherId)
+  const screen = await openPicker('todo,act900:notes')
+  if (screen === null) { check('temporary picker opens', false); process.exit(1) }
+  check('temporary row is readable and explicitly not saved', screen.has('Scratch notes') && screen.has('this run only'))
+  console.log('SCREEN temporary panels\n' + screen.view().split('\n').filter(line => line.trim()).join('\n'))
+  check('legacy anonymous placeholder asks for reselection', screen.has('Old anonymous address'))
+  const numbers = [...screen.view().matchAll(/Temporary panel #(\d+)/g)].map(match => match[1])
+  check('duplicate readable titles have distinct run-local numbers', numbers.length === 2 && new Set(numbers).size === 2)
+  cursor = await arrow(screen.stdin, 'down', 8, cursor)
+  screen.stdin.write('\r')
+  check('temporary Enter disables runtime only', await settled(() => !getSidePanelPanels().split(',').includes(id)) && panelSetWrites().length === 0)
+  check('same-title neighbor remains enabled', getSidePanelPanels().split(',').includes(otherId))
+  screen.stdin.write('\r')
+  check('temporary Enter restores runtime only', await settled(() => getSidePanelPanels().split(',').includes(id)) && panelSetWrites().length === 0)
+  const cell = screen.find('Scratch notes')
+  if (cell !== null) screen.click(cell.col, cell.row)
+  check('temporary mouse toggle also avoids persistence', await settled(() => !getSidePanelPanels().split(',').includes(id)) && panelSetWrites().length === 0)
+  cursor = await arrow(screen.stdin, 'up', 6, 8)
+  screen.stdin.write('\r')
+  check('durable edit never serializes temporary id', await settled(() => panelSetWrites().length > 0) && panelSetWrites().every(csv => !csv.includes('session:')))
+  await screen.close()
+  dispose()
+  disposeOther()
+  applySidePanelPanels('todo')
+}
+
+// Reserved-looking Component names keep runtime addresses while preferences
+// distinguish an explicit current selection from an ambiguous legacy entry.
+{
+  const dispose = panelStore.register({ id: 'act1:notes', title: 'Verified notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'act1' })
+  const screen = await openPicker('todo,act1:notes')
+  if (screen === null) { check('reserved Component picker opens', false); process.exit(1) }
+  check('legacy entry remains a separate unclaimed row', screen.has('Verified notes') && screen.has('Old anonymous address'))
+  const cell = screen.find('Verified notes')
+  if (cell !== null) screen.click(cell.col, cell.row)
+  check('explicit Component choice writes encoded preference', await settled(() => panelSetWrites().includes('todo,act1:notes,component:act1:notes')))
+  check('public registry address is unchanged', panelStore.get('act1:notes') !== undefined && panelStore.get('component:act1:notes') === undefined)
+  await screen.close()
+  dispose()
 }
 
 // ── g. the last checked panel cannot be removed (empty is not storable) ─────
