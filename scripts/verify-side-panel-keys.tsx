@@ -25,7 +25,7 @@
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
-const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { useSidePanel }, prefs, termTest] = await Promise.all([
+const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { useSidePanel }, prefs, termTest, { registerBuiltinPanels }, { panelStore }] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -33,10 +33,17 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { useSidePanel
   import('../src/components/sidePanel/useSidePanel.js'),
   import('../src/tuiDisplayPrefs.js'),
   import('./lib/term-test.mjs'),
+  import('../src/components/sidePanel/builtinPanels.js'),
+  import('../src/components/sidePanel/PanelStore.js'),
 ])
 const { render, AlternateScreen, Box, Text, useInput } = ui
-const { applySidePanelOpen, applySidePanelRatio } = prefs
+const { applySidePanelOpen, applySidePanelRatio, setTemporarySidePanelHidden } = prefs
 const { settled, viewportLines } = termTest
+
+// `sidePanel.panels` defaults to `*`, which derives the tab list from the
+// registry: register the built-ins the way the app does before any mount
+// (otherwise the controller legitimately has no enabled panel).
+registerBuiltinPanels()
 
 const COLS = 84
 const ROWS = 6
@@ -187,6 +194,25 @@ async function press(session: Session, bytes: string, expectState: string): Prom
   await press(s, '\x1bz', 'zoom=0')
   check('b: alt+z toggles zoom back', s.state().includes('zoom=0 active=jobs chat=81'), s.state())
   await s.close()
+}
+
+// --- f. a temporary panel's visibility is this run's state ------------------
+// `/settings` hides one by moving the session set, never the stored value, so
+// the bar's ONE derivation must drop it — and bring it back — on its own.
+{
+  const id = 'session:act777:scratch'
+  const dispose = panelStore.register({ id, title: 'Scratch', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act777' })
+  const s = await openSession(120)
+  await press(s, '\x02', 'split=1 focus=panel')
+  await press(s, '9', 'active=' + id)
+  check('f: a registered temporary panel is reachable under *', s.state().includes('active=' + id), s.state())
+  setTemporarySidePanelHidden(id, true)
+  check('f: hiding it removes it from the bar', await settled(() => s.state().includes('active=todo')), s.state())
+  setTemporarySidePanelHidden(id, false)
+  await press(s, '9', 'active=' + id)
+  check('f: unhiding brings it back without a stored id', s.state().includes('active=' + id), s.state())
+  await s.close()
+  dispose()
 }
 
 // --- e. Esc returns focus to chat (real key path) --------------------------

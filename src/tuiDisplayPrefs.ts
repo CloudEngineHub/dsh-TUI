@@ -512,7 +512,16 @@ export function persistentSidePanelId(id: string): string {
   return isLegacyAnonymousSidePanelId(id) ? 'component:' + id : id
 }
 
+/** Every built-in panel's id in the order the default lays them out. This is
+ *  the ordering skeleton of `ALL_SIDE_PANELS`, not a snapshot of what is
+ *  enabled: the resolver drops the ids that are not registered. */
 export const DEFAULT_SIDE_PANEL_IDS = 'todo,jobs,agents,info,trajectory,workspace,btw,companion'
+
+/** `sidePanel.panels`'s "show everything" token — the default. Under it the
+ *  enabled set follows the registry: plugin panels registered later appear
+ *  (and unregistered ones leave) without any settings write, and the picker
+ *  reads the same value as "all checked". */
+export const ALL_SIDE_PANELS = '*'
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
@@ -525,22 +534,157 @@ export function normalizeSidePanelRatio(value: unknown): number {
   return Math.min(0.95, Math.max(0.1, value))
 }
 
-/** Comma-separated enabled-panel ids: tokens that fail the id grammar are
- *  dropped (a typo must never wedge the layout); unknown-but-well-formed
- *  ids survive — a plugin may register them later in the session. */
-export function normalizeSidePanelPanels(value: unknown): string {
-  if (typeof value !== 'string') return DEFAULT_SIDE_PANEL_IDS
-  const seen = new Set<string>()
-  for (const token of value.split(',')) {
-    const id = token.trim().toLowerCase()
-    if (id !== '' && SIDE_PANEL_ID_PATTERN.test(id)) seen.add(id)
+/** Parsed `sidePanel.panels`. `*` is "every registered panel"; `''` is the
+ *  settings screen's clear (use the default); otherwise the exact ids, in
+ *  PanelBar order. `invalid` is what every write path refuses: the settings
+ *  gate rejects the draft, and `normalizeSidePanelPanels` (the store, and the
+ *  settings field's `format`) drops the unusable tokens. `resolveSidePanelIds`
+ *  still folds a raw invalid value to `all` for a caller handing it
+ *  un-normalized text — the PanelBar and the settings screen never do. */
+export type ParsedSidePanelPanels =
+  | { readonly mode: 'all' }
+  | { readonly mode: 'empty' }
+  | { readonly mode: 'list'; readonly ids: readonly string[] }
+  | { readonly mode: 'invalid'; readonly reason: 'sentinel' | 'token' | 'temporary' | 'empty' }
+
+/** Strict parse of one `sidePanel.panels` value (the settings save gate). */
+export function parseSidePanelPanels(value: string): ParsedSidePanelPanels {
+  const trimmed = value.trim()
+  if (trimmed === ALL_SIDE_PANELS) return { mode: 'all' }
+  if (trimmed === '') return { mode: 'empty' }
+  // The sentinel is a whole-value form: `*,todo` must not read as an id list.
+  if (trimmed.split(',').some(token => token.trim() === ALL_SIDE_PANELS)) {
+    return { mode: 'invalid', reason: 'sentinel' }
   }
-  return seen.size > 0 ? [...seen].join(',') : DEFAULT_SIDE_PANEL_IDS
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const raw of trimmed.split(',')) {
+    const id = raw.trim().toLowerCase()
+    // Tolerate `a,,b` / a trailing comma: the old gate did, and the store
+    // canonicalizes the same way.
+    if (id === '') continue
+    // A temporary address passes the grammar but has no durable identity, so
+    // saving one would persist a name no later run can honour (issue #1695).
+    if (SIDE_PANEL_ID_PATTERN.test(id) && isTemporarySidePanelId(id)) {
+      return { mode: 'invalid', reason: 'temporary' }
+    }
+    if (!SIDE_PANEL_ID_PATTERN.test(id)) return { mode: 'invalid', reason: 'token' }
+    if (seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  // `,` names nothing: refuse the write instead of folding it into a clear
+  // (which would silently re-enable the default set).
+  return ids.length > 0 ? { mode: 'list', ids } : { mode: 'invalid', reason: 'empty' }
 }
 
-/** Enabled panel ids in PanelBar order. */
-export function parseSidePanelIds(value: string): readonly string[] {
-  return normalizeSidePanelPanels(value).split(',')
+/** Tolerant normalization for the config/store entry points: `*`, a
+ *  non-string, a blank or an all-malformed value fold to `*`; otherwise
+ *  tokens are lower-cased, de-duped and order-preserved. Unlike the picker's
+ *  strict gate, a malformed token is dropped here — a typo must never wedge
+ *  the layout — while unknown-but-well-formed ids survive, because a plugin
+ *  may register them later in the session. A temporary address is dropped
+ *  too: it is session state, and a stored value may never claim one. */
+export function normalizeSidePanelPanels(value: unknown): string {
+  if (typeof value !== 'string') return ALL_SIDE_PANELS
+  const trimmed = value.trim()
+  if (trimmed === ALL_SIDE_PANELS) return ALL_SIDE_PANELS
+  const seen = new Set<string>()
+  for (const token of trimmed.split(',')) {
+    const id = token.trim().toLowerCase()
+    if (id === '' || id === ALL_SIDE_PANELS) continue
+    if (!SIDE_PANEL_ID_PATTERN.test(id) || isTemporarySidePanelId(id)) continue
+    seen.add(id)
+  }
+  return seen.size > 0 ? [...seen].join(',') : ALL_SIDE_PANELS
+}
+
+/** Which temporary panels this run is hiding.
+ *
+ *  A temporary panel (`session:actN:…`) has no durable identity, so its
+ *  checkbox cannot write the stored value — and the stored value cannot name
+ *  it either. Its on/off is session state instead: hiding one moves this set,
+ *  which every apply leaves alone, so replaying `sidePanel.panels` (boot, a
+ *  settings save, a live watch snapshot) never revives or buries one. */
+let hiddenTemporarySidePanelIds: readonly string[] = Object.freeze([])
+const hiddenTemporarySidePanelListeners = new Set<() => void>()
+
+export function getHiddenTemporarySidePanels(): readonly string[] {
+  return hiddenTemporarySidePanelIds
+}
+
+export function subscribeHiddenTemporarySidePanels(listener: () => void): () => void {
+  hiddenTemporarySidePanelListeners.add(listener)
+  return () => void hiddenTemporarySidePanelListeners.delete(listener)
+}
+
+/** Hide or restore one temporary panel for this run (`hidden` true = off the
+ *  bar, i.e. its checkbox is clear). Returns whether anything changed. */
+export function setTemporarySidePanelHidden(id: string, hidden: boolean): boolean {
+  const present = hiddenTemporarySidePanelIds.includes(id)
+  if (present === hidden) return false
+  hiddenTemporarySidePanelIds = Object.freeze(
+    hidden ? [...hiddenTemporarySidePanelIds, id] : hiddenTemporarySidePanelIds.filter(candidate => candidate !== id),
+  )
+  for (const listener of hiddenTemporarySidePanelListeners) listener()
+  return true
+}
+
+/** Map one persisted id back to the runtime id it names. A `component:`-encoded
+ *  address resolves only for a registered legacy-anonymous panel: the encoding
+ *  exists so that a bare `actN:x` left over in an old value stays an unclaimed
+ *  placeholder instead of being attributed to this run's activation. */
+function runtimeSidePanelId(id: string, registered: ReadonlySet<string>): string {
+  const prefix = 'component:'
+  if (!id.startsWith(prefix)) return id
+  const runtimeId = id.slice(prefix.length)
+  return isLegacyAnonymousSidePanelId(runtimeId) && registered.has(runtimeId) ? runtimeId : id
+}
+
+/** The one derivation of "which panels are enabled", given the stored value
+ *  and the live registry (ids in registry order).
+ *
+ *  - `*` (and a raw invalid value): the built-ins in their default order,
+ *    then every other registered panel in registry order — the same
+ *    tail order the old registration-time append produced, so an upgrade
+ *    changes no visible tab order.
+ *  - an explicit list: its ids, in its order — a `component:`-encoded one
+ *    decoded to the panel it names, an id nothing claims yet left as is (it
+ *    stays a placeholder until a plugin registers it). A bare `actN:x` is
+ *    never honoured: an old anonymous address cannot be attributed to this
+ *    run's activation (#1695), so it enables nothing even when a panel
+ *    happens to answer to that runtime id. Registered temporary panels join
+ *    at the tail unless `hiddenTemporary` names them: a stored value cannot
+ *    speak for a panel it cannot name. */
+export function resolveSidePanelIds(
+  configured: string | undefined,
+  registered: readonly string[],
+  hiddenTemporary: readonly string[] = [],
+): readonly string[] {
+  const parsed = parseSidePanelPanels(configured ?? ALL_SIDE_PANELS)
+  if (parsed.mode === 'list') {
+    const claimed = new Set(registered)
+    const ids = parsed.ids
+      .filter(id => !isLegacyAnonymousSidePanelId(id))
+      .map(id => runtimeSidePanelId(id, claimed))
+    for (const id of registered) {
+      if (!isTemporarySidePanelId(id) || hiddenTemporary.includes(id) || ids.includes(id)) continue
+      ids.push(id)
+    }
+    return ids
+  }
+  const remaining = new Set(registered)
+  const ids: string[] = []
+  for (const id of DEFAULT_SIDE_PANEL_IDS.split(',')) {
+    if (!remaining.delete(id)) continue
+    ids.push(id)
+  }
+  for (const id of registered) {
+    if (!remaining.delete(id)) continue
+    if (hiddenTemporary.includes(id)) continue
+    ids.push(id)
+  }
+  return ids
 }
 
 const sidePanelSplitEnabledStore = createLiveSetting<boolean>(true, value => normalizeBoolean(value, true))
@@ -558,7 +702,7 @@ export const subscribeSidePanelRatio = sidePanelRatioStore.subscribe
 export const getSidePanelRatio = sidePanelRatioStore.get
 export const applySidePanelRatio = sidePanelRatioStore.apply
 
-const sidePanelPanelsStore = createLiveSetting<string>(DEFAULT_SIDE_PANEL_IDS, normalizeSidePanelPanels)
+const sidePanelPanelsStore = createLiveSetting<string>(ALL_SIDE_PANELS, normalizeSidePanelPanels)
 export const subscribeSidePanelPanels = sidePanelPanelsStore.subscribe
 export const getSidePanelPanels = sidePanelPanelsStore.get
 export const applySidePanelPanels = sidePanelPanelsStore.apply

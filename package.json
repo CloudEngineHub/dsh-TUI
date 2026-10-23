@@ -5,6 +5,7 @@
   "keywords": [
     "dsh",
     "dsh-tui",
+    "dsh-plugin",
     "deepseek",
     "deepseek-harness",
     "cordis",
@@ -103,7 +104,10 @@
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./settings.json": "./lib/settings.json",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./icon": "./assets/plugin-icon.svg",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json"
   },
   "files": [
     "bin",
@@ -114,6 +118,7 @@
     "lib",
     "!lib/types/backends/codex/protocol/generated",
     "assets",
+    "locale",
     "cordis.patch.yml",
     "cordis.yml",
     "tui-profile/feed",
@@ -586,5 +591,6 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  }
+  },
+  "icon": "./assets/plugin-icon.svg"
 }

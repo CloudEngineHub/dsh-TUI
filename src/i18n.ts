@@ -466,6 +466,7 @@ const dict = {
   'questionnaire-answered': { zh: '📋 问卷已答 · {{total}} 题', en: '📋 Questionnaire answered · {{total}} questions' },
 
   // ── utils/loaded-context.ts ─────────────────────────────────────────
+  'command-output-truncated': { zh: '…（命令输出已截断：最多 200 行、65536 个 UTF-16 码元、每行 4000 显示单元）', en: '… (command output truncated: 200 lines, 65536 UTF-16 code units, 4000 cells per line)' },
   'context-truncated': { zh: '…（已截断）', en: '… (truncated)' },
   'context-sections': { zh: '系统提示词 {{n}} 段', en: 'System prompt {{n}} sections' },
   'context-files': { zh: '工作区指令 ×{{n}}', en: 'Workspace instructions ×{{n}}' },
@@ -1461,6 +1462,10 @@ const dict = {
     zh: '用法：在 /permission 选择「自动授权审查」',
     en: 'Use: pick Auto review in /permission',
   },
+  'plugins-experimental-session-search-hint': {
+    zh: '用法：开启后 Agent 多 5 个只读检索工具，可搜本工作区历史会话与事件、看溯源与全文；首次搜索才建内存索引（不落盘）；内核预设「极简模式」只保留 shell，不显示这 5 个工具。',
+    en: 'Use: enabling gives every Agent 5 read-only tools over past sessions in this workspace (search, lineage, full event read); the index is in-memory and builds on the first search; Minimal keeps its single shell tool and hides these.',
+  },
   'plugins-bundles-header': { zh: '已装 bundle（数据来自 profile 插件服务）：', en: 'Installed bundles (from the profile plugin service):' },
   'plugins-bundles-official': { zh: '安装自带', en: 'Official (installation-supplied)' },
   'plugins-bundles-installed': { zh: 'profile 依赖', en: 'Profile dependencies' },
@@ -1765,6 +1770,7 @@ const dict = {
   'question-fold-waiting': { zh: '正在等你回答', en: 'Waiting for your answer' },
   'question-fold-expand': { zh: '{{combo}} 展开', en: '{{combo}} to expand' },
   'question-fold-hint': { zh: '{{combo}} 折叠 / 点标题行收起', en: '{{combo}} to fold / click the header' },
+  'question-detail-scroll': { zh: '… {{count}} 行未显示 · {{up}}/{{down}} 翻阅', en: { one: '… {{count}} line outside view · {{up}}/{{down}} to scroll', other: '… {{count}} lines outside view · {{up}}/{{down}} to scroll' } },
   'question-submit-selection': { zh: '提交选择（Enter）', en: 'Submit selection (Enter)' },
   'question-custom-tab': { zh: '自定义回答', en: 'Custom answer' },
   'question-attached-label': { zh: '（附加：{{label}}）', en: '(attached: {{label}})' },
@@ -1781,9 +1787,11 @@ const dict = {
   'approval-always': { zh: '允许，且不再询问', en: 'Yes, and don\'t ask again' },
   'approval-hint': { zh: '↑/↓ 选择 · Enter 确认 · Esc 拒绝', en: '↑/↓ select · Enter confirm · Esc reject' },
   'approval-hint-feedback': { zh: '↑/↓/Tab 选择 · Enter 确认 · 选中拒绝后可输入理由 · Esc 拒绝', en: '↑/↓/Tab select · Enter confirm · on No, type a reason · Esc reject' },
+  'approval-hint-preview': { zh: '↑/↓ 选择 · Enter 确认 · Esc 拒绝 · {{up}}/{{down}} 翻阅预览', en: '↑/↓ select · Enter confirm · Esc reject · {{up}}/{{down}} scroll preview' },
   'approval-feedback-row': { zh: '{{label}}：{{reason}}', en: '{{label}}: {{reason}}' },
   'approval-subagent': { zh: '来自子代理 {{id}} 的请求', en: 'Requested by subagent {{id}}' },
   'approval-blocked-path': { zh: '涉及允许目录之外的路径：{{path}}', en: 'Outside the allowed directories: {{path}}' },
+  'panel-preview-omitted': { zh: '… 另有 {{count}} 行未显示', en: { one: '… {{count}} more line not shown', other: '… {{count}} more lines not shown' } },
 
   // ── components/Subagent*.tsx ────────────────────────────────────────
   'subagent-model': { zh: '模型', en: 'Model' },
@@ -2485,8 +2493,7 @@ const dict = {
 
   // ── screens/Launchpad.tsx（开屏落地页：取代旧的"只有标题的空白会话"）───────
   // 落地页是"启动后第一屏"：大标题与吉祥物居中、输入框在下、再往下是
-  // 信息与快捷入口。用户真正发出第一条内容后才进聊天页，所以这里的
-  // 文案要短、要是动作而不是说明。
+  // 信息与快捷入口。发送首句或开始多行编辑时进入聊天页；这里的文案要短。
   'launchpad-placeholder': { zh: '说点什么，或输入 / 看命令…', en: 'Say something, or type / for commands…' },
   // （launchpad-param-*-label / launchpad-param-mode-* 六键已删：2026-10 第四版
   // 参数行只画值不画字段名——用户原话"大家都知道是模型啊，不用画蛇添足"；
@@ -2499,8 +2506,8 @@ const dict = {
   // 轮换顺序 = launchpad-tip → launchpad-tip-2 → launchpad-tip-3 → 回到首条；
   // 首启那一条（launchpad-first-run）优先级最高，不参与轮换。
   'launchpad-tip-2': {
-    zh: 'Ctrl+V 直接粘贴，Esc 清空后按 Esc 去看历史会话',
-    en: 'Ctrl+V pastes; Esc clears the draft, then Esc again opens sessions',
+    zh: 'Ctrl+V 直接粘贴，Shift+Enter 进入聊天页换行',
+    en: 'Ctrl+V pastes; Shift+Enter opens chat with a newline',
   },
   'launchpad-tip-3': {
     zh: '参数行四段都能点：模型 · 思考深度 · 模式 · 权限',

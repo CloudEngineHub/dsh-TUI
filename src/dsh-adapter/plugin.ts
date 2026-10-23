@@ -67,7 +67,7 @@ import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, isTemporarySidePanelId, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizePluginFieldsOrder, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, parsePluginFieldsOrder, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelPanels, applySidePanelRatio, applySidePanelSplitEnabled, ALL_SIDE_PANELS, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizePluginFieldsOrder, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, parsePluginFieldsOrder, parseSidePanelPanels, resolveMathRendering, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -99,7 +99,6 @@ import { trackHostSettingsSection, type TuiSettingsField, type TuiSettingsFieldW
 import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { armAdmissionLoader } from './admission-loader.js'
 import { assembleBackendsFromProfile } from './backend-assembly.js'
-import { applyConfiguredSidePanelPanels, applySidePanelPanelsFromSettings } from './panels.js'
 import { disposeRootSettled } from './root-dispose.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import { PageMargin } from '../components/PageMargin.js'
@@ -107,6 +106,7 @@ import { normalizeSplashFont } from '../components/splashFonts.js'
 import { normalizeBrandSetting, resolveBrand, setActiveBrand } from '../branding.js'
 import { SETTING_GROUPS, SHORTCUT_FIELD_META, settingField } from '../settings/definitions.js'
 import instances from '../ink/instances.js'
+import { getShutdownInput, type ShutdownInput } from '../ink/shutdown-input.js'
 import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from '../ink/termio/csi.js'
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, ESU, EXIT_ALT_SCREEN, SHOW_CURSOR } from '../ink/termio/dec.js'
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMultiplexer } from '../ink/termio/osc.js'
@@ -1287,9 +1287,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   applySidePanelSplitEnabled(config.sidePanel?.splitEnabled)
   applySidePanelOpen(config.sidePanel?.open)
   applySidePanelRatio(config.sidePanel?.ratio)
-  // Registered ids survive: on the profile path a third-party row may have
-  // registered its panel before this row applied (./panels.ts).
-  applyConfiguredSidePanelPanels(config.sidePanel?.panels)
+  // The stored value only: `*` (the default) lets the registry supply the
+  // plugin panels, so no registration-time merge is needed (issue #1662).
+  applySidePanelPanels(config.sidePanel?.panels)
   applyCompanionSkin(config.companion?.skin)
   applyBtwContextTurns(config.btw?.contextTurns)
   applyBtwContextBudget(config.btw?.contextBudget)
@@ -1596,10 +1596,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       }
       bootedTerminalImages = lastBootedTerminalImages ?? value.terminalImages ?? config.terminalImages ?? true
     }
-    /** False only during the boot application below: a registered panel absent
-     *  from its CSV is not a user removal (./panels.ts). */
-    let settingsEditsLive = true
-    let lastPanelsCsv: string | undefined
     // The /settings language field writes `lang` through the settings
     // service (user layer): apply it live and mirror it to lang.json so
     // the /lang command and next-boot resolution agree. DSH_TUI_LANG
@@ -1645,12 +1641,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       applySidePanelSplitEnabled(value.sidePanel?.splitEnabled ?? config.sidePanel?.splitEnabled)
       applySidePanelOpen(value.sidePanel?.open ?? config.sidePanel?.open)
       applySidePanelRatio(value.sidePanel?.ratio ?? config.sidePanel?.ratio)
-      // A watch snapshot can change unrelated fields. Only a changed panels
-      // field can express removal; replaying the boot CSV must not hide plugins.
-      const panelsCsv = value.sidePanel?.panels ?? config.sidePanel?.panels
-      if (!settingsEditsLive) applyConfiguredSidePanelPanels(panelsCsv)
-      else if (panelsCsv !== lastPanelsCsv) applySidePanelPanelsFromSettings(panelsCsv)
-      lastPanelsCsv = panelsCsv
+      // The stored value only: registration never rewrites it, so every apply
+      // (boot or live, same CSV or a new one) is idempotent (issue #1662).
+      applySidePanelPanels(value.sidePanel?.panels ?? config.sidePanel?.panels)
       applyCompanionSkin(value.companion?.skin ?? config.companion?.skin)
       applyBtwContextTurns(value.btw?.contextTurns ?? config.btw?.contextTurns)
       applyBtwContextBudget(value.btw?.contextBudget ?? config.btw?.contextBudget)
@@ -1678,12 +1671,20 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // re-apply — unrelated settings edits must not disturb a live /effort
     // choice mid-session.
     let lastEffortDefault: string | null | undefined = undefined
+    /** True only while boot's first settings snapshot is applied: a capability
+     *  backend restores its own effort at boot, and that first apply must not
+     *  overwrite it (#1688). */
+    let bootApplication = false
     const applyEffortDefault = (value: SettingsValue): void => {
       const next = value.effortDefault ?? null
       if (next === lastEffortDefault) return
-      lastEffortDefault = next
       const level = next === null || next === 'auto' ? undefined : next
-      channel.setDefaultEffort(level)
+      // Capability backends restore their own effort. Boot is not a live edit:
+      // Auto and resumed sessions keep that selection until the user changes it.
+      const preserve = bootApplication && backendStart !== undefined && (level === undefined || backendStart.resumedSessionId !== undefined)
+      if (!preserve && backendStart !== undefined && !channel.ready) { lastEffortDefault = undefined; return }
+      if (!preserve && (channel.setDefaultEffort(level) as unknown) === false) { lastEffortDefault = undefined; return }
+      lastEffortDefault = next
     }
     const apply = (next: SettingsValue): void => {
       applyLayout(next)
@@ -1722,9 +1723,26 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       notifyChannel(t('settings-fullscreen-migrated'), { color: 'warning' })
     }
     const { fullscreen: staleFullscreen, ...migratedSettings } = bootSettings
-    settingsEditsLive = false
+    bootApplication = true
     apply(fullscreenMigration === 'unset' ? migratedSettings : bootSettings)
-    settingsEditsLive = true
+    bootApplication = false
+    if (backendStart !== undefined) settingsCtx.effect(() => {
+      let active = true
+      let generation = channel.ready ? channel.agentBindingGeneration : undefined
+      const stop = channel.subscribe(() => {
+        if (!channel.ready || (lastEffortDefault !== undefined && generation === channel.agentBindingGeneration)) return
+        // Adoption publishes several synchronous updates before its binding generation.
+        queueMicrotask(() => {
+          if (!active || !channel.ready) return
+          if (generation !== undefined && generation !== channel.agentBindingGeneration) {
+            lastEffortDefault = scope.get().effortDefault ?? null
+          }
+          generation = channel.agentBindingGeneration
+          if (lastEffortDefault === undefined) applyEffortDefault(scope.get())
+        })
+      })
+      return () => { active = false; stop() }
+    })
     let lastTerminalImages = bootSettings.terminalImages ?? config.terminalImages ?? true
     let lastLaunchpad = bootSettings.launchpad ?? config.launchpad ?? true
     settingsCtx.effect(() => scope.watch(next => {
@@ -1927,11 +1945,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           ...settingField('effortDefault'),
+          optionsSource: 'effort',
           format(value: unknown): string {
             // Unset in settings.yaml: show what a boot would actually start
             // on (the persisted /effort choice → the cordis effort default)
             // instead of a misleading blank.
-            if (value === undefined || value === null || value === 'auto') {
+            if (value === undefined || value === null) {
               return readEffortPref() ?? config.effort ?? 'auto'
             }
             return String(value)
@@ -2049,22 +2068,27 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           ...settingField('sidePanel.panels'),
-          placeholder: DEFAULT_SIDE_PANEL_IDS,
+          placeholder: ALL_SIDE_PANELS,
           format(value: unknown): string {
-            // Unset in the user layer: show the effective list.
-            return typeof value === 'string' && value.trim() !== ''
-              ? value
-              : config.sidePanel?.panels ?? DEFAULT_SIDE_PANEL_IDS
+            // Project what the store actually uses: a hand-edited value with
+            // an unusable token must not read differently here than it does
+            // in the PanelBar, so it is normalized exactly like the store
+            // normalizes it. Unset in the user layer: the effective config
+            // value (`*` by default), which the picker reads as "everything
+            // checked".
+            return normalizeSidePanelPanels(
+              typeof value === 'string' && value.trim() !== '' ? value : config.sidePanel?.panels,
+            )
           },
           parse(text: string) {
-            const draft = text.trim()
-            if (draft === '') return { kind: 'clear' }
-            // Strict gate: every token must be a well-formed panel id. The
-            // store would drop a typo silently, so a draft that does not
-            // round-trip is refused instead of saved as something else.
-            const tokens = draft.split(',').map(token => token.trim().toLowerCase()).filter(token => token !== '')
-            if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token) || isTemporarySidePanelId(token))) return undefined
-            return { kind: 'set', value: normalizeSidePanelPanels(draft) }
+            const parsed = parseSidePanelPanels(text)
+            if (parsed.mode === 'empty') return { kind: 'clear' }
+            if (parsed.mode === 'all') return { kind: 'set', value: ALL_SIDE_PANELS }
+            // Strict gate: a malformed token (or a list embedding `*`, or a
+            // temporary address no later run could honour) is refused instead
+            // of saved as something else.
+            if (parsed.mode === 'invalid') return undefined
+            return { kind: 'set', value: parsed.ids.join(',') }
           },
         },
         {
@@ -3404,8 +3428,13 @@ export async function finishExit(
   notice: string | undefined,
   stderrNotice: string | undefined,
   done: () => void,
-  options: { keepAltScreen?: boolean } = {},
+  options: {
+    keepAltScreen?: boolean
+    /** Explicit renderer lease for legacy wrappers that replace unmount(). */
+    shutdownInput?: ShutdownInput
+  } = {},
 ): Promise<void> {
+  const input = options.shutdownInput ?? getShutdownInput(instance)
   try {
     // Resolve the Ink runtime twice: the instances map is keyed by stdout
     // identity, so a replaced/overridden stdout misses it; the render()
@@ -3413,7 +3442,10 @@ export async function finishExit(
     // a missed lookup skipped detachForShutdown, leaving the stdin pump,
     // TTY handlers and querier alive so the self-heal probe re-wrote
     // ENABLE_MOUSE_TRACKING after DISABLE_MOUSE_TRACKING had been sent).
-    const fromMap = readInkShutdownState(instances.get(process.stdout))
+    const mapped = instances.get(input?.stdout ?? process.stdout)
+    const fromMap = input === undefined || mapped?.shutdownInput === input
+      ? readInkShutdownState(mapped)
+      : undefined
     const fromHandle = instance === undefined ? undefined : readInkShutdownState(instance)
     // A handle that exposes neither detach hook is not an Ink runtime we can
     // latch (e.g. the fake render handles in shutdown regressions) — treat it
@@ -3475,7 +3507,11 @@ export async function finishExit(
     ].join('')
     const suffix = notice === undefined ? '' : `${notice}\n`
     const restoreFrame = options.keepAltScreen === true ? '\x1b[2J\x1b[H' : ''
-    await writeStream(process.stdout, `${restoreFrame}${cleanup}\r\n${suffix}`)
+    // A replacement may already own the terminal. Its modes and frame must
+    // survive old-root disposal; a stale exit notice also belongs to that root.
+    if (input?.ownsInput() !== false) {
+      await writeStream(input?.stdout ?? process.stdout, `${restoreFrame}${cleanup}\r\n${suffix}`)
+    }
     // Re-drain AFTER the cleanup sequences have landed (#507): terminal
     // replies and mouse packets already in flight when the exit started
     // keep arriving while cleanup is being written — the detach-time drain
@@ -3485,8 +3521,9 @@ export async function finishExit(
     // environment; 50ms proved too tight there) while staying well inside
     // the exit window the user already waits through.
     await new Promise<void>(resolve => setTimeout(resolve, 150))
-    runtime?.drainStdin?.()
-    if (stderrNotice !== undefined) {
+    if (input !== undefined) input.drain()
+    else runtime?.drainStdin?.()
+    if (stderrNotice !== undefined && input?.ownsInput() !== false) {
       await writeStream(process.stderr, `\n${stderrNotice}\n`)
     }
   } catch {
@@ -3494,6 +3531,7 @@ export async function finishExit(
       ctx.logger.debug('dsh-tui: terminal cleanup failed; continuing with process shutdown')
     } catch { /* a failed diagnostic must not swallow the exit action */ }
   }
+  input?.release()
   // Filesystem-only: the exported clipboard images live in a per-process
   // temp directory that nothing else removes.
   removeClipboardImageDir()
@@ -3647,24 +3685,43 @@ function runUpdate(
   hint: (sessionId: string) => string = id => resumeCommand(profile, id),
   exitSeam?: ProcessExitSeam,
 ): void {
+  const recovery = preservedSessionTail(sessionId, hint)
   disposeRootAndThen(ctx, () => {
+    logRestartEvent('update: starting', { profile, targetVersion })
+    writeHandoffNotice(`\ndsh-tui: installation starts. Check/repair an interrupted installation before resuming.${recovery}`)
     if (profile === undefined) {
-      process.stderr.write(`\n${t('update-aborted-no-profile')}\n`)
+      writeHandoffNotice(`\n${t('update-aborted-no-profile')}${recovery}`)
       process.exit(1)
     }
-    void updateTuiAndRestart(sessionId, profile, targetVersion, kernel, superviseReplacement(exitSeam, {})).then(
+    const cancellation = new AbortController()
+    const supervision: TuiRestartOptions = superviseReplacement(exitSeam, {})
+    const replacementRequest = exitSeam?.request
+    if (exitSeam !== undefined) exitSeam.request = () => {
+      cancellation.abort()
+      // Installer owns its cancellation deadline. Entry fallback disposal
+      // must not kill this process before the owned installer tree settles.
+      return 'supervising'
+    }
+    const onSpawn = supervision.onSpawn
+    supervision.onSpawn = child => {
+      if (exitSeam !== undefined) exitSeam.request = replacementRequest
+      onSpawn?.(child)
+    }
+    void updateTuiAndRestart(sessionId, profile, targetVersion, kernel, supervision, cancellation.signal).then(
       ({ updateCode, restartCode }) => {
+        logRestartEvent('update: finished', { updateCode, restartCode })
         if (updateCode !== 0) {
-          process.stderr.write(
-            `\ndsh-tui update failed (exit ${updateCode}).${preservedSessionTail(sessionId, hint)}`,
+          writeHandoffNotice(
+            `\ndsh-tui update failed (exit ${updateCode}). Check/repair the installation before resuming.${preservedSessionTail(sessionId, hint)}`,
           )
         }
         process.exit(restartCode)
       },
       updateError => {
+        logRestartEvent('update: rejected')
         const message = updateError instanceof Error ? updateError.message : String(updateError)
-        process.stderr.write(
-          `\ndsh-tui update failed: ${message}.${preservedSessionTail(sessionId, hint)}`,
+        writeHandoffNotice(
+          `\ndsh-tui update failed: ${message}. Check/repair the installation before resuming.${preservedSessionTail(sessionId, hint)}`,
         )
         process.exit(1)
       },

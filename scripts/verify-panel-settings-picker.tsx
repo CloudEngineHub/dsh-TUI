@@ -1,24 +1,33 @@
 /**
  * sidePanel.panels 勾选式面板多选回归（用户实测反馈：kind:'text' + 教学文案
- * 不可用）。设置屏对该字段渲染 checkbox 行列表，值仍是逗号分隔字符串
+ * 不可用）。设置屏对该字段渲染 checkbox 行列表，值仍是 `*` 或逗号分隔字符串
  * （schema/契约零变化）。
  *
  * Locked behavior:
- *  p. 勾选↔字符串映射：内置面板行从 panelStore 注册表现场枚举（图标+名称+
- *     一句话描述），勾选态由存储字符串派生；Enter 与真 SGR 鼠标点击都走
+ *  r. 纯解析器：`*` = 全部已注册面板（内置按默认顺序、其余按注册表顺序）；
+ *     显式列表原样返回（含未注册占位 id）；空/非法归一为 `*`；`*` 是整值
+ *     形式（`*,todo` 非法）。
+ *  p. 勾选↔值映射：行序固定为默认顺序（内置默认顺序 + 插件注册顺序），不随存储
+ *     列表顺序或勾选移动；勾选态由同一解析器派生；Enter 与真 SGR 鼠标点击都走
  *     同一 toggle（点击即勾选/取消）。
- *  o. 顺序保真：已有 id 保持现有相对顺序（PanelBar 顺序是用户数据），
- *     新勾选追加到尾、取消即移除——写入的字符串逐字断言。
- *  u. 「格式合法但尚无面板认领」的 id 在列表尾部显示为已勾选的占位行，
+ *  o. 顺序：已有 id 保持现有相对顺序（PanelBar 顺序是用户数据），新勾选**插回**
+ *     它在固定默认顺序里的位置（不追加到尾部），取消即移除——写入的字符串逐字断言；
+ *     `*` 下取消一行会先物化完整列表，绝不丢插件 id（issue #1662）。
+ *  u. 「格式合法但尚无面板认领」的 id 在显式列表里显示为已勾选的占位行，
  *     不被静默丢弃；取消即移除。
  *  l. 活注册表：设置屏打开期间插件面板（plugin:panel 命名空间）注册即
  *     出现行、撤下即退场——撤下后已写入的 id 退化为占位行（扩展故事的
  *     两半：先占位、插件到位自动认领）。
+ *  s. issue #1662 原场景：`*` 下插件面板显示为已勾选；取消任一内置行写回的
+ *     显式列表仍含插件 id；高级行显示 `*`，编辑时展开成真实列表，未改动
+ *     确认仍写回 `*`（不把展开结果钉进设置）。
+ *  t. 高级行确认对照「打开编辑器时的快照」而非重算：编辑期间注册的新面板
+ *     不会让未改动的确认退化成显式列表（否则刚到的面板会被关掉）。
  *  g. 至少一个面板：取消最后一个勾选被拒绝（空串在持久化契约里不可
  *     表示，会静默回落默认值），给出错误通知且零写入。
  *  a. 高级逃生：列表尾部的原始文本行进既有草稿编辑器（可改顺序/手填
  *     未来 id）；非法草稿按既有 invalid 语义拒绝。
- *  h. hint 收缩为勾选即所得，并点明插件面板自动出现；kind 保持 'text'
+ *  h. hint 点明插件面板默认出现、取消后才写成显式列表；kind 保持 'text'
  *     （持久化格式与发布 schema 不变）。
  *
  * Run: node --import tsx/esm scripts/verify-panel-settings-picker.tsx
@@ -39,7 +48,7 @@ const [
   { panelStore },
   { registerBuiltinPanels },
   { SETTING_DEFINITIONS },
-  { SIDE_PANEL_ID_PATTERN, applySidePanelPanels, getSidePanelPanels, isTemporarySidePanelId },
+  { ALL_SIDE_PANELS, getHiddenTemporarySidePanels, getSidePanelPanels, isTemporarySidePanelId, normalizeSidePanelPanels, parseSidePanelPanels, resolveSidePanelIds, setTemporarySidePanelHidden },
   { t },
   { settled, viewportLines },
 ] = await Promise.all([
@@ -119,14 +128,14 @@ function makeChannel(): unknown {
         kind: 'text' as const,
         group: 'side-panel',
         // The real field's strict gate lives in plugin.ts's parse (mirrored
-        // here): a draft that does not round-trip the id grammar is refused
-        // instead of saved as something else.
+        // here): the same `parseSidePanelPanels`, so a draft that does not
+        // round-trip is refused instead of saved as something else.
         parse(text: string) {
-          const draft = text.trim()
-          if (draft === '') return { kind: 'clear' as const }
-          const tokens = draft.split(',').map(token => token.trim().toLowerCase()).filter(token => token !== '')
-          if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token) || isTemporarySidePanelId(token))) return undefined
-          return { kind: 'set' as const, value: tokens.join(',') }
+          const parsed = parseSidePanelPanels(text)
+          if (parsed.mode === 'empty') return { kind: 'clear' as const }
+          if (parsed.mode === 'all') return { kind: 'set' as const, value: ALL_SIDE_PANELS }
+          if (parsed.mode === 'invalid') return undefined
+          return { kind: 'set' as const, value: parsed.ids.join(',') }
         },
       }],
     }],
@@ -206,9 +215,47 @@ async function openPicker(stored: string) {
   return screen
 }
 
-// Builtin rows render in registry order (order: todo 10, info 15, jobs 20,
-// btw 22, trajectory 25, agents 30, workspace 35, companion 40).
-const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
+/** Row index of one picker row in focus order: rows are exactly one line
+ *  each, so the distance from the first checkbox row is the index. */
+function rowOf(screen: { view(): string }, needle: string): number {
+  const lines = screen.view().split('\n')
+  const first = lines.findIndex(line => /\[[✓ ] \]/.test(line))
+  const target = lines.findIndex(line => line.includes(needle))
+  return first >= 0 && target >= first ? target - first : -1
+}
+
+// Rows always render in the documented default order (the order the value
+// ships with), independent of the stored list order: todo, jobs, agents,
+// info, trajectory, workspace, btw, companion — plugin panels appended in
+// registry order. Toggling or registering must never reshuffle this list.
+const ROW_JOBS = 1, ROW_COMPANION = 7
+
+// ── r. the pure resolver: the one source both the picker and PanelBar read ──
+{
+  // `*` follows the built-in DEFAULT order (builtins by their documented
+  // order, not registry order), then appends everything else in registry
+  // order — exactly the tail the old registration-time append produced.
+  check('r *: built-ins keep the documented default order',
+    resolveSidePanelIds(ALL_SIDE_PANELS, ['todo', 'info', 'jobs']).join(',') === 'todo,jobs,info')
+  check('r *: plugin panels append after the built-ins',
+    resolveSidePanelIds(ALL_SIDE_PANELS, ['demo:md', 'todo']).join(',') === 'todo,demo:md')
+  check('r *: unregistered built-ins are dropped',
+    !resolveSidePanelIds(ALL_SIDE_PANELS, ['todo']).includes('jobs'))
+  check('r explicit: ids survive verbatim, unknown placeholders included',
+    resolveSidePanelIds('todo,demo:future', ['todo']).join(',') === 'todo,demo:future')
+  check('r empty/undefined normalizes to the * default',
+    normalizeSidePanelPanels(undefined) === ALL_SIDE_PANELS
+    && normalizeSidePanelPanels('') === ALL_SIDE_PANELS
+    && normalizeSidePanelPanels('BAD!') === ALL_SIDE_PANELS)
+  check('r malformed tokens are dropped, usable ones kept',
+    normalizeSidePanelPanels(' todo, BAD!, , jobs ') === 'todo,jobs')
+  check('r strict parse: the sentinel is a whole-value form',
+    parseSidePanelPanels('*,todo').mode === 'invalid'
+    && parseSidePanelPanels('*').mode === 'all'
+    && parseSidePanelPanels('').mode === 'empty'
+    && parseSidePanelPanels(',').mode === 'invalid'
+    && parseSidePanelPanels('todo,,jobs').mode === 'list')
+}
 
 // ── p. checkbox rows + mapping + o. toggle semantics (append/remove) ────────
 {
@@ -220,7 +267,7 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
 
   cursor = await arrow(screen.stdin, 'down', ROW_COMPANION, cursor)
   screen.stdin.write('\r')
-  check('o Enter checks Companion -> appended at the end',
+  check('o Enter checks Companion -> inserted at its default position (the tail)',
     await settled(() => screen.has('[✓ ] ♥'), { timeoutMs: 4000 })
     && await settled(() => panelSetWrites().includes('todo,jobs,agents,companion'), { timeoutMs: 4000 }),
     panelSetWrites().join(' | '))
@@ -251,10 +298,27 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
 {
   const screen = await openPicker('agents,todo')
   if (screen === null) { check('o custom order scenario opened', false); process.exit(1) }
+  // The stored order is `agents,todo`, but the list keeps the default order
+  // (todo 0, jobs 1, ...). Ticking Jobs inserts it after its displayed
+  // predecessor (Todo), which happens to be the tail here; the rows never move.
   cursor = await arrow(screen.stdin, 'down', ROW_JOBS, cursor)
   screen.stdin.write('\r')
-  check('o custom order kept, new id appended after it',
+  check('o custom order kept, tick inserted after its displayed predecessor',
     await settled(() => panelSetWrites().includes('agents,todo,jobs'), { timeoutMs: 4000 }),
+    panelSetWrites().join(' | '))
+  await screen.close()
+}
+
+// ── o. a new tick goes back to its displayed position, not the tail ────────
+{
+  const screen = await openPicker('todo,companion')
+  if (screen === null) { check('o insert-at-position scenario opened', false); process.exit(1) }
+  // Rows are in the fixed default order, so Jobs sits at row 1: ticking it must
+  // write the id after Todo (its display predecessor), not after Companion.
+  cursor = await arrow(screen.stdin, 'down', ROW_JOBS, cursor)
+  screen.stdin.write('\r')
+  check('o a new tick is inserted at its display position, not appended',
+    await settled(() => panelSetWrites().includes('todo,jobs,companion'), { timeoutMs: 4000 }),
     panelSetWrites().join(' | '))
   await screen.close()
 }
@@ -265,7 +329,8 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   if (screen === null) { check('u unclaimed scenario opened', false); process.exit(1) }
   check('u unclaimed id renders as a checked tail row', /[✓][^\n]*· demo:future/.test(screen.view()))
   check('u unclaimed row carries the waiting hint', screen.has(t('settings-panels-unclaimed')))
-  // Row 8 = the unclaimed row (after the 8 builtin rows).
+  // Row 8 = the unclaimed row: registered panels keep the default order and
+  // unclaimed placeholders sit at the tail.
   cursor = await arrow(screen.stdin, 'down', 8, cursor)
   screen.stdin.write('\r')
   check('u unchecking the placeholder removes only it',
@@ -299,14 +364,126 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   await screen.close()
 }
 
+// ── s. issue #1662: `*` (the default) covers every registered panel ────────
+// A plugin panel registered at runtime is actually enabled; the picker must
+// agree. Toggling a row materializes the explicit list from the resolver, so
+// it cannot silently drop the plugin ids that were never in the stored text.
+{
+  const disposeDemo = panelStore.register({
+    id: 'demo:md',
+    title: 'Markdown demo',
+    icon: 'M',
+    order: 50,
+    source: 'plugin',
+    component: () => null,
+  }, { pluginId: 'demo' })
+  const ROW_ADVANCED = 9 // 8 builtins in default order, then the plugin row
+
+  // s1. checked state under `*`: every registered panel, plugin included.
+  {
+    const screen = await openPicker('*')
+    if (screen === null) { check('s issue scenario opens', false); process.exit(1) }
+    check('s plugin panel is checked under *',
+      /\[✓ \][^\n]*Markdown demo/.test(screen.view()))
+    check('s advanced row shows the * sentinel',
+      screen.view().split('\n').some(line => line.includes(t('settings-panels-advanced')) && line.includes('*')))
+
+    // s2. untick a builtin: the materialized list keeps the plugin id. Rows keep
+    // the default order (only their checkbox flips), so the plugin row stays at
+    // its display index; locate it by name anyway rather than by a hardcoded one.
+    const moveTo = async (row: number): Promise<void> => {
+      const delta = row - cursor
+      if (delta === 0) return
+      cursor = await arrow(screen.stdin, delta > 0 ? 'down' : 'up', Math.abs(delta), cursor)
+    }
+    await moveTo(rowOf(screen, 'Companion'))
+    screen.stdin.write('\r')
+    check('s unticking a builtin keeps plugin ids',
+      await settled(() => panelSetWrites().includes('todo,jobs,agents,info,trajectory,workspace,btw,demo:md'), { timeoutMs: 4000 }),
+      panelSetWrites().join(' | '))
+
+    await moveTo(rowOf(screen, 'Markdown demo'))
+    screen.stdin.write('\r')
+    check('s unticking the plugin row removes it from the explicit list',
+      await settled(() => panelSetWrites().includes('todo,jobs,agents,info,trajectory,workspace,btw'), { timeoutMs: 4000 }),
+      panelSetWrites().join(' | '))
+    await screen.close()
+  }
+
+  // s3. an explicit list that predates the plugin leaves it unchecked but
+  // visible (the extension story; one tick brings it back).
+  {
+    const screen = await openPicker('todo,jobs,agents,info,trajectory,workspace,btw')
+    if (screen === null) { check('s explicit-list scenario opens', false); process.exit(1) }
+    check('s plugin panel renders unchecked under an explicit list',
+      /\[  \][^\n]*Markdown demo/.test(screen.view()))
+    await screen.close()
+  }
+
+  // s4. the advanced row expands `*` into the real list, and an untouched
+  // confirm must NOT pin that expansion into settings.
+  {
+    const screen = await openPicker('*')
+    if (screen === null) { check('s advanced sentinel scenario opens', false); process.exit(1) }
+    cursor = await arrow(screen.stdin, 'down', ROW_ADVANCED, cursor)
+    screen.stdin.write('\r')
+    check('s advanced draft expands * to the effective list',
+      await settled(() => screen.has('demo:md▌'), { timeoutMs: 4000 }))
+    await sleep(150) // 固定窗:pacing 确认键须与开编辑的 Enter 分属两个 stdin chunk，否则被并进草稿
+    screen.stdin.write('\r')
+    // The confirm stages the sentinel, not the expansion: the write is `*`
+    // (a no-op value that still pins "all"), never the materialized CSV.
+    check('s untouched advanced confirm keeps * (not the expansion)',
+      await settled(() => !screen.view().includes('▌'), { timeoutMs: 4000 })
+      && panelSetWrites().length === 1 && panelSetWrites()[0] === '*',
+      panelSetWrites().join(' | '))
+    await screen.close()
+  }
+
+  // ── t. a mid-edit registration must not pin the expansion ─────────────────
+  {
+    const screen = await openPicker('*')
+    if (screen === null) { check('t advanced-snapshot scenario opens', false); process.exit(1) }
+    cursor = await arrow(screen.stdin, 'down', ROW_ADVANCED, cursor)
+    screen.stdin.write('\r')
+    check('t advanced draft expands * to the effective list (before the registration)',
+      await settled(() => screen.has('demo:md▌'), { timeoutMs: 4000 }))
+    // A panel lands while the editor is open: the registry half of the expansion
+    // grows under the draft. The confirm must compare against the snapshot the
+    // editor opened with, or the untouched save becomes an explicit list without
+    // the new id — silently switching off the panel that just arrived.
+    const disposeLate = panelStore.register({
+      id: 'demo:late',
+      title: 'Late demo',
+      icon: 'L',
+      order: 60,
+      source: 'plugin',
+      component: () => null,
+    }, { pluginId: 'demo' })
+    await sleep(150) // 固定窗:pacing 确认键须与开编辑的 Enter 分属两个 stdin chunk
+    screen.stdin.write('\r')
+    // The row list gains one entry, so the focused index now lands on the
+    // newcomer and the `▌` marker goes with it; wait for the write, not the marker.
+    check('t unchanged confirm survives a mid-edit registration (still *)',
+      await settled(() => panelSetWrites().length === 1, { timeoutMs: 4000 })
+      && panelSetWrites()[0] === '*',
+      panelSetWrites().join(' | '))
+    await screen.close()
+    disposeLate()
+  }
+
+  disposeDemo()
+}
+
 // Temporary selections never enter the settings write path, even when
-// another durable checkbox is saved while the same picker stays open.
+// another durable checkbox is saved while the same picker stays open. Under
+// `*` the registry supplies them; hiding one is session state, so no stored
+// value can name it and no replay can revive it.
 {
   const id = 'session:act900:notes'
   const dispose = panelStore.register({ id, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act900' })
   const otherId = 'session:act901:notes'
   const disposeOther = panelStore.register({ id: otherId, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act901' })
-  applySidePanelPanels('todo,' + id + ',' + otherId)
   const screen = await openPicker('todo,act900:notes')
   if (screen === null) { check('temporary picker opens', false); process.exit(1) }
   check('temporary row is readable and explicitly not saved', screen.has('Scratch notes') && screen.has('this run only'))
@@ -316,20 +493,23 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   check('duplicate readable titles have distinct run-local numbers', numbers.length === 2 && new Set(numbers).size === 2)
   cursor = await arrow(screen.stdin, 'down', 8, cursor)
   screen.stdin.write('\r')
-  check('temporary Enter disables runtime only', await settled(() => !getSidePanelPanels().split(',').includes(id)) && panelSetWrites().length === 0)
-  check('same-title neighbor remains enabled', getSidePanelPanels().split(',').includes(otherId))
+  check('temporary Enter hides it for this run only',
+    await settled(() => getHiddenTemporarySidePanels().includes(id)) && panelSetWrites().length === 0)
+  check('same-title neighbor stays visible', !getHiddenTemporarySidePanels().includes(otherId))
   screen.stdin.write('\r')
-  check('temporary Enter restores runtime only', await settled(() => getSidePanelPanels().split(',').includes(id)) && panelSetWrites().length === 0)
+  check('temporary Enter restores it without a write',
+    await settled(() => !getHiddenTemporarySidePanels().includes(id)) && panelSetWrites().length === 0)
   const cell = screen.find('Scratch notes')
   if (cell !== null) screen.click(cell.col, cell.row)
-  check('temporary mouse toggle also avoids persistence', await settled(() => !getSidePanelPanels().split(',').includes(id)) && panelSetWrites().length === 0)
+  check('temporary mouse toggle also avoids persistence',
+    await settled(() => getHiddenTemporarySidePanels().includes(id)) && panelSetWrites().length === 0)
   cursor = await arrow(screen.stdin, 'up', 6, 8)
   screen.stdin.write('\r')
   check('durable edit never serializes temporary id', await settled(() => panelSetWrites().length > 0) && panelSetWrites().every(csv => !csv.includes('session:')))
   await screen.close()
+  setTemporarySidePanelHidden(id, false)
   dispose()
   disposeOther()
-  applySidePanelPanels('todo')
 }
 
 // Reserved-looking Component names keep runtime addresses while preferences
@@ -341,8 +521,13 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   check('legacy entry remains a separate unclaimed row', screen.has('Verified notes') && screen.has('Old anonymous address'))
   const cell = screen.find('Verified notes')
   if (cell !== null) screen.click(cell.col, cell.row)
-  check('explicit Component choice writes encoded preference', await settled(() => panelSetWrites().includes('todo,act1:notes,component:act1:notes')))
-  check('public registry address is unchanged', panelStore.get('act1:notes') !== undefined && panelStore.get('component:act1:notes') === undefined)
+  // The encoded preference names the panel the user actually ticked; the
+  // bare actN entry survives untouched as its own placeholder, and the new
+  // id lands at its default-order position rather than at the tail.
+  check('explicit Component choice writes encoded preference',
+    await settled(() => panelSetWrites().includes('todo,component:act1:notes,act1:notes')))
+  check('public registry address is unchanged',
+    panelStore.get('act1:notes') !== undefined && panelStore.get('component:act1:notes') === undefined)
   await screen.close()
   dispose()
 }
@@ -383,6 +568,15 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   screen.stdin.write('\x1b') // Esc leaves without saving
   await settled(() => !screen.has('▌'), { timeoutMs: 4000 })
   check('a Esc on the editor writes nothing', panelSetWrites().length === before)
+  check('a rejected draft leaves the previous checkbox selection intact',
+    screen.has('[✓ ] ≡') && screen.has('[✓ ] ▸') && screen.has('[✓ ] ?')
+    && screen.has('[  ] ◆') && screen.has('[  ] ♥'))
+  cursor = await arrow(screen.stdin, 'up', 8 - ROW_JOBS, cursor)
+  screen.stdin.write('\r')
+  check('a toggle after cancelling an invalid draft only changes the selected panel',
+    await settled(() => panelSetWrites().length > before, { timeoutMs: 4000 })
+    && panelSetWrites().at(-1) === 'todo,btw',
+    panelSetWrites().join(' | '))
   await screen.close()
 }
 

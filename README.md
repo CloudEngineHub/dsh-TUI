@@ -36,6 +36,8 @@ Image files referenced with `@path` use the same admission and resize/conversion
 
 Panels without a verified Component identity are temporary: settings show their title and a distinct number for this run. Their toggles take effect immediately without being saved, and unrelated settings changes preserve that choice. Old `actN:panel` entries cannot be mapped safely: remove the placeholder and select the current panel again. Verified Components named `actN` keep their public runtime address; an explicit selection uses `component:actN:panel` in saved preferences to avoid claiming an old anonymous entry.
 
+The default reasoning-effort setting offers the current backend/model’s declared tiers, including custom IDs. Saved values absent from that catalog stay visible and stored; while loading or unavailable, only Auto is selectable. On DSH, Auto follows the saved `/effort` choice, then the configured effort, then the model default. Claude/Codex retain backend preferences for Auto at startup and for resumed sessions; explicitly choosing Auto resets the model default. Explicit settings changes affect the next request; unsupported preferences fall back with a notice and are never forced onto a route.
+
 Resuming a DSH session preserves its recorded reasoning effort (or its live selection when reattaching). The saved default seeds new sessions; explicit `/effort` and effort-default settings changes still apply to the current session’s next request.
 
 
@@ -48,7 +50,7 @@ Resuming a DSH session preserves its recorded reasoning effort (or its live sele
 - **Mermaid diagrams** — ````mermaid ```` fences drawn as Unicode diagrams.
 - **LaTeX math** — `$…$` and `$$…$$` formulas as Unicode text, fractions and limits stacked in display blocks; `mathRendering: image` typesets block and one-row inline formulas as terminal images on graphics terminals.
 - **Timeline rail** — every turn clickable; timeline / scrollbar / hidden gutter.
-- **Side panel** — `Ctrl+B` splits the chat with a panel column once the terminal is wide enough; drag the divider to resize it. All eight built-in panels are enabled by default. The header shows each inactive panel's symbol; hover to see its name. Narrow terminals and inline mode keep full-screen panels.
+- **Side panel** — `Ctrl+B` splits the chat with a panel column once the terminal is wide enough; drag the divider to resize it. All eight built-in panels are enabled by default, and so are plugin panels registered later (`sidePanel.panels: '*'`; untick a row in `/settings` to switch to an explicit list). The header shows each inactive panel's symbol; hover to see its name. Narrow terminals and inline mode keep full-screen panels.
 - **Live state** — activity animation, context bar, TPS, cache hit rate, effort, tokens, session cost estimate (main + subagents), Git and session metadata. Title, trajectory-strip and session-state animations update independently of the transcript and pause when idle or unfocused.
   Context-bar fill follows backend occupancy; colors estimate content composition. Compaction clears obsolete estimates, and missing composition displays a single used block with a measured used count in both hover details.
 - **One session manager** — `/resume` `/home` `/agentview` `/bg` `⌸`.
@@ -67,6 +69,8 @@ Plugin side panels stay enabled when unrelated settings change. Editing the enab
 
 
 Workspace side-panel counts match the session manager: the current conversation counts; empty logs, subagents, fork ancestors and archived sessions do not. Registered workspaces with no visible conversations remain at zero. Loading and read errors are shown separately; press `r` to refresh.
+
+Fullscreen mouse selection stays in the pane where the gesture starts, including chat, sidebar and either diff column. Diagonal, word and line selection copy that pane’s text; soft wraps join independently, source newlines remain, and divider drags only resize.
 
 ## Preview
 
@@ -398,8 +402,12 @@ the dashboard alone does not acknowledge every child. Task status stays failed.
 `Enter` send · `Tab` complete · `Ctrl+Enter` interrupt and send · `Alt+Up` recall the last message · `Esc` closes local layers before interrupting a running turn, double-`Esc` rewinds on empty idle input · `Ctrl+B` side panel · `Ctrl+O` details · `Ctrl+R` history (`↑`/`↓` and `Ctrl+R` are scoped to the current project) · `Ctrl+V` paste · `Ctrl+Shift+E` fullscreen draft editor · `?` shortcuts · `←` open the session manager (DSH backgrounds the current session first).
 In both the launchpad and chat, `Ctrl+U` deletes from the caret to the current line start, preserving text to the right and whole image chips. It edits only the focused input.
 
+In the launchpad input, `Shift+Enter` (or `Option+Enter`) opens chat and inserts a newline at the caret, keeping the draft and staged images unsent. Continue typing there, then press `Enter` to send.
+
 
 In both the launchpad and chat, `Alt/Option+←/→` moves by whitespace-delimited words and `Alt/Option+Backspace` deletes the previous word, like `Ctrl+W`. On macOS, configure your terminal to send Option as Meta.
+
+Use `Alt+Up` / `Alt+Down` to page through question text and details, or approval previews on very short terminals, without moving the choice focus; these keys are remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the preview. Complete OAuth links remain readable when browser and clipboard helpers are unavailable.
 
 Text, cursor position and staged image attachments on the launchpad or in chat while the backend starts are preserved when the session becomes ready. Press `Enter` after it is ready to send; an earlier `Enter` preserves the draft without queuing it. Opening a new session while startup is pending clears the previous draft and its images.
 
@@ -426,6 +434,8 @@ Inside that window, with a query of the matching response type outstanding, same
 Fragmented SGR mouse reports no longer land in the prompt as text: an incomplete report header is held until the rest arrives, and a report that completes is handled as a mouse event. The hold is armed only while mouse reporting is actually active (fullscreen, with mouse tracking enabled); inline sessions and terminals that never enable tracking keep the existing behavior. The claim window is bounded from first capture (at most 1 second; 64 bytes max), and a continuation arriving inside it is still claimed rather than replayed. Release has no timer: once a parse call sees either bound exceeded, it replays the held bytes as ordinary keys in arrival order — literal input can be delayed, but is never dropped.
 A completed text-only assistant reply containing only a leading `⏵` status line remains visible in the conversation and can be selected for copying. Live status lines and status lines followed by a real answer stay out of the transcript body.
 
+
+Plugin slash-command results, including errors, remain as local transcript blocks for scrolling and copying during the current session. Indentation and line breaks are preserved. Each report retains at most 200 lines, 65,536 UTF-16 code units and 4,000 terminal cells per line, plus a visible truncation marker. The local display rows are not sent as model input or replayed as conversation history. The backend may separately persist command audit events and their results. Older local report blocks are evicted within the shared 600-row budget. Explicit built-in report layouts (such as `/goal`) keep their existing formatting.
 
 Mouse (fullscreen): drag to select and copy, double/triple click to select a word or line, click tool cards, timeline ticks and `[Image #N]` previews.
 
@@ -505,6 +515,9 @@ Runtime path, module boundaries, performance notes and persistence locations: [A
 - Injected plugin context has no standalone display; it counts into the context segments.
 - `/model` changes the next request’s route in the same session; history and session ID are preserved. The last used route is recorded when the next request starts. DSH versions before `0.1.2-alpha.3` refuse switching and prompt an upgrade because their subagents inherit the original route.
 - `Ctrl+V` needs platform clipboard tools; unsupported bitmap formats are rejected.
+- Windows Terminal/ConPTY sixel frames check the last transmitted raster’s cursor position before parking, using measured cell geometry and encoded band controls. Detected drift uses the same physical clear and redraw as `Ctrl+L`. Probes allow one pending reply (500 ms), skip resize/handoff, and pause for 60 seconds after an unanswered query or three repairs within 10 seconds. Set `DSH_TUI_SIXEL_CURSOR_HEAL=0` to disable; `DSH_TUI_DEBUG` records probe/recovery decisions. This bounded mitigation cannot detect every kind of pixel corruption or repair ConPTY itself.
+
+- Shutdown drains only the actual renderer-owned input after terminal cleanup and a 150-ms settle window. Embedders retaining only `unmount` keep that input lease; wrappers replacing the method must pass the renderer’s `shutdownInput` lease to `finishExit`. Custom input drains its own buffered bytes; a device-specific kernel drain can be supplied as the bounded synchronous `render({ drainStdin })` callback. Revoked/replaced owners and non-TTY input are not drained. The window does not guarantee arbitrary SSH latency.
 - Local Windows copying uses PowerShell with UTF-8 stdin. Copies run in order; each PowerShell attempt has a two-second timeout (Windows PowerShell, then PowerShell 7). If both fail, OSC 52 remains the fallback and requires terminal support. SSH never writes the remote native clipboard.
 - Catchable exits explicitly end synchronized output (DEC 2026) as part of terminal cleanup, even without a final frame. SIGKILL, native aborts and a fully blocked JavaScript event loop cannot guarantee in-process cleanup; recovery then requires the terminal or an external supervisor.
 - While the TUI owns an active raw input, it reasserts OS raw mode on input-gap/focus recovery and every five seconds without waiting for a key. This repairs externally reset cooked/ECHO state even when Node still reports `isRaw=true`; recovery may take one interval while the event loop runs. The periodic check stops during editor pauses and shutdown/handoff and does not resend display protocols.
@@ -517,6 +530,20 @@ Runtime path, module boundaries, performance notes and persistence locations: [A
 Full list: [Architecture and limitations → Known limitations](docs/architecture.en.md#known-limitations).
 
 ## Development
+
+`pnpm dev` keeps the full install/build/pack checks by default. For explicit local
+iteration, set `DSH_TUI_DEV_FAST=1` (for example,
+`DSH_TUI_DEV_FAST=1 pnpm dev -- --no-launch`). A miss runs frozen install,
+`compile`, pack without repeating `prepare`, and isolated profile installation.
+An unchanged hit skips all four stages only while source/config and compiler-loader contents,
+Node/pnpm/npm/dsh versions, compiled and vendor output, the tarball, and the installed
+package/profile match. Replacing pnpm/npm/dsh without changing its reported version
+requires one normal (non-fast) development run.
+Internal document links such as `CLAUDE.md -> AGENTS.md` are fingerprinted;
+external, excluded, dangling or cyclic links and unreadable inputs disable reuse
+with a diagnostic. Failures invalidate the success stamp before work begins.
+The script prints stage durations and cache hits. Run normal `pnpm build` and
+focused regressions before publishing; fast mode does not change release gates.
 The monorepo development host (`pnpm tui`, `scripts/run.ts`) enables heap
 forensics only with `DSH_TUI_HEAP_WATCH=1`; unset it or use `0` to disable it.
 It samples every 15 seconds and takes one snapshot at each heap threshold of
@@ -534,6 +561,8 @@ completed files, not peak usage or uncertain crash leftovers.
 
 
 CI uses Node 24 and pnpm 11. The package supports Node `^22.19 || >=24`.
+
+The launcher checks the manifest’s Node range before loading the application. Known unsupported versions (including Node 23 and prereleases) stop with Node upgrade instructions. Missing or unrecognized ranges allow startup for compatibility with migrated launchers; `doctor` reports that compatibility cannot be determined. `help` and `version` remain available.
 
 TUI entry points use production React even when the workspace sets
 `NODE_ENV=development`. For renderer debugging, explicitly set
@@ -586,7 +615,7 @@ Managing what is installed: `/plugin remove <bundle>`, `/plugin enable <name | r
 
 These three actions have no cancellation — the service offers none — so `esc` only closes the pane while the write finishes and reports itself into the transcript. Enable and disable have no CLI verb either (the service writes them into the profile's own files), and a removal never deletes your own data: anything left under `~/.dsh-tui` is reported once and left for you to delete.
 
-`/plugin list` also advertises the experimental features DSH ships, leaves off by default, and this app knows how to drive (currently Agent Teams and Auto review), each with its switch and usage line. A DSH installation that does not ship one shows no such section.
+`/plugin list` also advertises the experimental features DSH ships, leaves off by default, and this app knows how to drive (currently Agent Teams, Auto review and Session search), each with its switch and usage line. A DSH installation that does not ship one shows no such section.
 
 ## Documentation
 
@@ -626,6 +655,8 @@ No sandbox of its own: dsh-TUI uses the active DSH profile's filesystem, shell, 
 **Permission persistence** (all three backends): the Claude and Codex backends keep their `/permission` picks in `~/.dsh-tui/backends/<id>/prefs.json`; the DSH pick is kept at `~/.dsh-tui/permission.json`. Every durable preset switch teaches it (picker, typed `/permission`, Shift+Tab static modes, or a switch the official command performed on its own), and a session that never customized its permission planes starts on the remembered preset — applied through the same official switch path. "Never customized" is about the user: the composition writes its own default preset into every fresh session at creation, and those events do not count. Plan-mode transients and the experimental Auto review preset (see below) are excluded, a `DSH_PERMISSION_MODE` launch pin (this run's initial permission plane) outranks the file, and an identity the mounted roster no longer offers is skipped.
 
 **Auto review** (DSH, experimental): `/plugin list` advertises it; after `/plugin enable @deepseek-ai/dsh-experimental-auto-review`, the `auto` preset (shown as "Auto review", tagged `EXP`) appears in `/permission` and its completions live, and disappears when the plugin is removed. It is session-only: the model reviews every tool call before it runs, there is no file sandbox, and each call costs one extra model request; its approval prompts show the localized reason, and a subagent denial reads "Auto review denied; not executed". Picking it in the picker first shows a risk confirmation (`Enter` enables, `Esc` goes back; in fullscreen its Enable / Go back rows are clickable); a typed `/permission auto` switches directly. Once the current session has selected it, the picker skips the confirmation and Shift+Tab stops skipping it.
+
+**Session search** (DSH, experimental): `/plugin list` advertises it; after `/plugin enable @deepseek-ai/dsh-experimental-session-search`, an agent gains five read-only tools (`session_search`, `session_event_search`, `session_trace`, `session_event_trace`, `session_event_read`) over earlier sessions in the same workspace — cross-session access requires an identical `cwd`. The index is in memory and is built on the first search; nothing is written to disk. This app keeps the kernel Minimal preset at its single persistent-shell tool, so Minimal never shows these five tools or their usage guidance.
 
 **Upstream auto-retry** (DSH): whenever a session binds (boot, `/model` switch, resume), the TUI seeds a retry policy — 5 attempts, transport-drop-aware failure codes including `STREAM_CLOSED` (a dropped upstream stream) — on **the provider route that session actually uses**, through the official `llm-pi-ai` settings section (the policy the kernel's `llm-retry` plugin executes). Only routes without an explicit `retryPolicy` are seeded — dormant channels are never written — and `upstreamRetry: false` in cordis.yml opts out.
 
@@ -676,3 +707,49 @@ Community, related projects, and companion tools built by friends:
 ## License
 
 [MIT](LICENSE)
+
+### Storage migration and read budgets
+
+The SQLite migration script uses the official `node:sqlite.backup()` API on
+supported Node 22.19+ and Node 24+ builds. It probes that capability before
+opening the source read-only and includes committed WAL data in a consistent
+snapshot; it never copies a live database/WAL pair by hand. A build missing the
+API reports a migration-specific prerequisite. Session-tree reads validate packed
+rows and check their entire member count against the remaining scan budget before
+expanding events. Oversized rows report truncation; malformed rows report failure.
+The logical budget does not eliminate physical JSON/frame parsing or validation.
+Development `@deepseek-ai/*` release-age exceptions list only exact package versions in the current
+lockfile (including the legacy SQLite island); all other versions retain the
+24-hour delay. Regenerate with `node scripts/verify-release-age-cohort.mjs --write`
+after an intentional lockfile update, then review the cohort diff.
+
+### Bounded update installation
+
+`/update` and `dsh-tui update` give each profile installer invocation a **30-minute
+wall-clock limit**. Set `DSH_TUI_UPDATE_TIMEOUT_MS` to a positive integer in
+milliseconds to change it (invalid values use the default). Output activity does
+not reset this deadline; a quiet but healthy installation can use the full limit.
+Only the final process exit code establishes success: a printed `Done` does not.
+Ctrl+C cancels the owned installer. On POSIX, cancellation terminates its own
+process group, then force-kills remaining descendants after two seconds. Windows
+uses a dedicated PowerShell/native supervisor with a private Job Object. The
+installer joins that job atomically while suspended; verified membership is required
+before it runs. The supervisor retains the job handle after the root exits, so
+cancellation and timeout also terminate orphaned descendants holding output pipes.
+It does not enable job breakaway or kill processes by name or an exited root PID.
+
+Windows requires Windows 10 / Server 2016 or later and Windows PowerShell with
+`Add-Type`/native interop available. Startup or job-membership failures stop the
+installation before running an unowned installer. A cleanup failure is reported as
+unconfirmed, never as proof that all writes stopped. Timeout, cancellation, or
+unconfirmed cleanup returns nonzero and prevents retries, stale-file removal,
+repair, and TUI replacement. A partial installation may remain: check/repair that
+profile before using the recovery command printed at update start and on failure.
+`~/.dsh-tui/restart.log` records installer category, PID, termination reason and last
+output timestamp before any restart.
+
+The focused **Windows installer process ownership** workflow runs the real native
+regression on `windows-latest`, with Node 24 and no dependency installation. To run
+it locally on Windows: `node scripts/verify-update-process-windows.mjs`. It checks
+orphan descendants, timeout/cancellation, nested jobs, failure diagnostics, streams,
+arguments and an unrelated process; a Linux run explicitly skips native acceptance.

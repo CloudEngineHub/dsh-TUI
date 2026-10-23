@@ -1,5 +1,6 @@
 import { completeCommands, isCommandCompletionToken, type CommandCompletionNode } from '../../commands.js'
-import { getSidePanelPanels, parseSidePanelIds } from '../../tuiDisplayPrefs.js'
+import { getHiddenTemporarySidePanels, getSidePanelPanels, resolveSidePanelIds } from '../../tuiDisplayPrefs.js'
+import { panelStore } from '../../components/sidePanel/PanelStore.js'
 import { SESSION_COLOR_NAMES } from '../../terminal-utils/sessionColors.js'
 import { getLang, LANGS, t } from '../../i18n.js'
 import { PERMISSION_PRESET_AUTO, permissionPresetKeys } from '../../permissionPresetLabels.js'
@@ -165,7 +166,14 @@ export function createCommandCompletions(deps: {
         { name: 'toggle', description: 'Toggle the sidebar', descriptionKey: 'sugg-panel-toggle-desc' },
         { name: 'focus', description: 'Focus the side panel', descriptionKey: 'sugg-panel-focus-desc' },
         { name: 'zoom', description: 'Zoom the active panel', descriptionKey: 'sugg-panel-zoom-desc' },
-        ...parseSidePanelIds(getSidePanelPanels()).map(id => ({ name: id, description: `Open the ${id} panel`, descriptionKey: 'sugg-panel-id-desc' as const })),
+        // Same derivation as the bar and the picker: a temporary panel hidden
+        // for this run must not be suggested, or running the suggestion only
+        // reaches the "unavailable" fallback.
+        ...resolveSidePanelIds(
+          getSidePanelPanels(),
+          panelStore.list().map(entry => entry.definition.id),
+          getHiddenTemporarySidePanels(),
+        ).map(id => ({ name: id, description: `Open the ${id} panel`, descriptionKey: 'sugg-panel-id-desc' as const })),
       ]
       if (path.length === 1 && path[0] === 'plan') return [
         { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },

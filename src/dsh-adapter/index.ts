@@ -12,7 +12,7 @@ import type { SessionModeSpec } from '../sessionModes.js'
 import type { NotificationMethod, TaskNotifications } from '../ink/terminal-notification.js'
 import { parseBackendChoice } from './backend-registry.js'
 import { parseBackendId, type KernelBackendId } from '../kernelPrefs.js'
-import { BTW_CONTEXT_BUDGET_DEFAULT, BTW_CONTEXT_TURNS_DEFAULT, DEFAULT_COMPANION_SKIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, normalizeBtwContextBudget, normalizeBtwContextTurns, normalizeCompanionSkin, normalizePageMargin, normalizeSidePanelPanels, normalizeSidePanelRatio, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { ALL_SIDE_PANELS, BTW_CONTEXT_BUDGET_DEFAULT, BTW_CONTEXT_TURNS_DEFAULT, DEFAULT_COMPANION_SKIN, DEFAULT_STATUS_BAR, normalizeBtwContextBudget, normalizeBtwContextTurns, normalizeCompanionSkin, normalizePageMargin, normalizeSidePanelPanels, normalizeSidePanelRatio, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../components/splashFonts.js'
 import { normalizeBrandSetting, type BrandSetting } from '../branding.js'
@@ -246,9 +246,12 @@ export interface Config {
     /** Chat column as a fraction of the content width, clamped to 0.1–0.95
      *  (default 0.68); +/- while the panel is focused nudges it live. */
     ratio?: number
-    /** Enabled panel ids, comma-separated, in PanelBar order (default:
-     *  all eight built-in panels). A
-     *  malformed id is dropped, an unknown one survives for a plugin. */
+    /** Which panels the side-panel bar shows, in PanelBar order. `*` (the
+     *  default) means every registered panel — built-ins plus whatever a
+     *  plugin registers later; an explicit comma list means exactly those ids
+     *  (an unknown-but-well-formed id stays as a placeholder for a plugin).
+     *  Registration never rewrites this value: a malformed id is dropped, the
+     *  rest keep their order. */
     panels?: string
   }
   /** Companion pet (settings `dsh-tui.companion.*`): which skin the panel
@@ -415,10 +418,10 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
       value => normalizeSidePanelRatio(value),
     ),
     panels: Schema.transform(
-      Schema.string().default(DEFAULT_SIDE_PANEL_IDS),
+      Schema.string().default(ALL_SIDE_PANELS),
       value => normalizeSidePanelPanels(value),
     ),
-  }).default({ splitEnabled: true, open: false, ratio: 0.68, panels: DEFAULT_SIDE_PANEL_IDS }),
+  }).default({ splitEnabled: true, open: false, ratio: 0.68, panels: ALL_SIDE_PANELS }),
   companion: Schema.object({
     skin: Schema.transform(
       Schema.string().default(DEFAULT_COMPANION_SKIN),

@@ -229,8 +229,9 @@ let previousTemporary: string | undefined
 for (const reverse of [false, true]) {
   const composition = await mount(true)
   const panelPrefs = await import('../src/tuiDisplayPrefs.js')
-  const panelActions = await import('../src/dsh-adapter/panels.js')
-  panelActions.applyConfiguredSidePanelPanels(previousTemporary === undefined ? 'todo,act1:search' : 'todo,' + previousTemporary)
+  // A stored value never carries a temporary address: a previous run's
+  // `session:actN:…` is dropped on the way in (#1695).
+  panelPrefs.applySidePanelPanels(previousTemporary === undefined ? 'todo,act1:search' : 'todo,' + previousTemporary)
   composition.report = join(dir, `collision-${reverse}.jsonl`)
   writeFileSync(composition.report, '')
   const packages = ['component', 'anonymous'].map(kind => {
@@ -253,15 +254,20 @@ for (const reverse of [false, true]) {
     check('cross-source same name survives either order', ids.includes('verify-collision:search') && temporary !== undefined, JSON.stringify(ids))
     check('Component identity comes from manifest, not Loader entry id', !ids.includes('different-entry:search'))
     const registered = (await import('../src/components/sidePanel/PanelStore.js')).panelStore
-    const liveIds = () => panelPrefs.parseSidePanelIds(panelPrefs.getSidePanelPanels())
-    check('previous-run temporary preferences never become live entries', previousTemporary === undefined || !liveIds().includes(previousTemporary))
+    const liveIds = () => panelPrefs.resolveSidePanelIds(
+      panelPrefs.getSidePanelPanels(),
+      registered.list().map(entry => entry.definition.id),
+      panelPrefs.getHiddenTemporarySidePanels(),
+    )
+    check('previous-run temporary preferences never become live entries',
+      previousTemporary === undefined || !liveIds().includes(previousTemporary))
     if (temporary !== undefined) {
-      panelActions.applySidePanelPanelsFromSettings('todo,verify-collision:search')
+      panelPrefs.applySidePanelPanels('todo,verify-collision:search')
       check('durable settings replay keeps temporary panel enabled', liveIds().includes(temporary))
-      panelPrefs.applySidePanelPanels(liveIds().filter(id => id !== temporary).join(','))
-      panelActions.applyConfiguredSidePanelPanels('todo,verify-collision:search')
+      panelPrefs.setTemporarySidePanelHidden(temporary, true)
+      panelPrefs.applySidePanelPanels('todo,verify-collision:search')
       check('same settings replay keeps manually closed temporary panel off', !liveIds().includes(temporary))
-      panelPrefs.applySidePanelPanels([...liveIds(), temporary].join(','))
+      panelPrefs.setTemporarySidePanelHidden(temporary, false)
       previousTemporary = temporary
     }
     const componentEntry = composition.root.loader.resolve(reverse ? 'verify-collision' : 'different-entry') as { fiber?: { dispose?(): Promise<unknown> } } | undefined
@@ -287,28 +293,32 @@ const manifest = parseManifest(${JSON.stringify(manifestOf('verify-legacy'))}, {
 const projection = projectManifest(manifest)
 ${ENTRY_SOURCE.replace('const panels =', "bindComponentIdentity(ctx, manifest, { ...projection, metadata: { ...projection.metadata, name: 'act1' } }); const panels =")}`)
   try {
-    const panels = await import('../src/dsh-adapter/panels.js')
     const prefs = await import('../src/tuiDisplayPrefs.js')
-    panels.applyConfiguredSidePanelPanels('todo,component:act1:demo,jobs')
+    const resolved = (registry: readonly string[]) =>
+      prefs.resolveSidePanelIds(prefs.getSidePanelPanels(), registry)
+    prefs.applySidePanelPanels('todo,component:act1:demo,jobs')
     await composition.root.loader.create({ id: 'act1', name: legacyEntry, config: { report: composition.report } })
     await composition.root.loader.await()
     check('legacy Component activated', await settled(() => reportedIds(composition.report).length > 0))
-    check('late registration resolves saved encoding in place', prefs.getSidePanelPanels() === 'todo,act1:demo,jobs')
+    check('registration leaves the saved encoding untouched',
+      prefs.getSidePanelPanels() === 'todo,component:act1:demo,jobs')
+    check('late registration resolves the saved encoding in place',
+      resolved(['act1:demo']).includes('act1:demo'))
     check('a genuine act1 Component keeps its public runtime address', reportedIds(composition.report)[0] === 'act1:demo')
-    const { applySidePanelPanelsFromSettings } = await import('../src/dsh-adapter/panels.js')
-    const { getSidePanelPanels, parseSidePanelIds } = await import('../src/tuiDisplayPrefs.js')
-    applySidePanelPanelsFromSettings('todo,act1:demo')
-    check('ambiguous old CSV cannot enable the real Component', !parseSidePanelIds(getSidePanelPanels()).includes('act1:demo'))
-    applySidePanelPanelsFromSettings('todo,component:act1:demo')
-    check('explicit preference maps to unchanged runtime id', parseSidePanelIds(getSidePanelPanels()).includes('act1:demo'))
-    check('encoded preference is not a runtime address', !parseSidePanelIds(getSidePanelPanels()).includes('component:act1:demo'))
+    prefs.applySidePanelPanels('todo,act1:demo')
+    check('ambiguous old CSV cannot enable the real Component', !resolved(['act1:demo']).includes('act1:demo'))
+    prefs.applySidePanelPanels('todo,component:act1:demo')
+    check('explicit preference maps to unchanged runtime id', resolved(['act1:demo']).join(',') === 'todo,act1:demo')
+    check('encoded preference is not a runtime address', !resolved(['act1:demo']).includes('component:act1:demo'))
     const loaded = composition.root.loader.resolve('act1') as { fiber?: { dispose?(): Promise<unknown> } } | undefined
     await loaded?.fiber?.dispose?.()
-    check('unload removes the public address without an encoded ghost', !parseSidePanelIds(getSidePanelPanels()).some(id => id === 'act1:demo' || id === 'component:act1:demo'))
-    panels.applyConfiguredSidePanelPanels('todo,component:act1:demo,jobs')
+    check('unload leaves the saved encoding unclaimed but kept',
+      prefs.getSidePanelPanels() === 'todo,component:act1:demo' && !resolved([]).includes('act1:demo'))
+    prefs.applySidePanelPanels('todo,component:act1:demo,jobs')
     await composition.root.loader.create({ id: 'act1-reloaded', name: legacyEntry, config: { report: composition.report } })
     await composition.root.loader.await()
-    check('re-registration resolves the saved encoding once', await settled(() => parseSidePanelIds(getSidePanelPanels()).filter(id => id === 'act1:demo').length === 1 && !getSidePanelPanels().includes('component:')))
+    check('re-registration resolves the saved encoding once',
+      await settled(() => resolved(['act1:demo']).filter(id => id === 'act1:demo').length === 1))
   } finally { await composition.root.fiber.dispose() }
 }
 

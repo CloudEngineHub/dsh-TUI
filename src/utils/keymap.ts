@@ -195,6 +195,8 @@ export type ShortcutActionId =
   | 'continue'
   | 'showAll'
   | 'questionFold'
+  | 'questionDetailUp'
+  | 'questionDetailDown'
   | 'redraw'
   | 'todoFold'
   | 'expandEditor'
@@ -237,6 +239,8 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionSpec[] = [
   { id: 'redraw', defaults: ['ctrl+l'] },
   { id: 'todoFold', defaults: ['ctrl+q'] },
   { id: 'questionFold', defaults: ['ctrl+k'] },
+  { id: 'questionDetailUp', defaults: ['alt+up'] },
+  { id: 'questionDetailDown', defaults: ['alt+down'] },
   { id: 'expandEditor', defaults: ['ctrl+shift+e'] },
   // 开屏标语里的"一键 star"：与 `/star`、弹窗按钮同一个动作（gh api PUT）。
   // 用 alt 组合是为了不跟输入框抢字母键。

@@ -8,7 +8,9 @@
  *  - root-context register/list rejected (requirePluginCaller);
  *  - register → PanelStore entry with '<pluginId>:' prefixed id,
  *    source='plugin', mountPolicy forced 'active', minColumns default 28,
- *    and the enabled-panel CSV gains the id;
+ *    and the stored `sidePanel.panels` value left untouched (registration
+ *    never rewrites the setting; `*` derives the enabled set from the
+ *    registry instead);
  *  - duplicate id → undefined + ledger DUPLICATE_CONTRIBUTION_ID;
  *  - per-plugin budget (≤4) → undefined + ledger PANEL_BUDGET_EXCEEDED;
  *  - descriptor validation: apiVersion/id/title/icon-width/component-or-
@@ -18,7 +20,8 @@
  *    (no-consumer open returns false without rate-limit consumption);
  *  - subscribe: only own-panel events (registered/badge/unregistered/
  *    disabled), listener errors swallowed;
- *  - dispose → store entry gone, CSV cleaned, ledger release recorded.
+ *  - dispose → store entry gone, effective set no longer enables it, ledger
+ *    release recorded.
  *
  * Render smoke (headless XTerm): throwing plugin panel renders the error
  * card and the chat body stays intact; the 3rd reportError flips the entry
@@ -59,9 +62,9 @@ const { Context } = cordis
 const { Terminal: XTerm } = XTermMod
 const { render, ThemeProvider, AlternateScreen, Box, Text } = ui
 const { settled, sleep } = termTest
-const { applySidePanelPanels, applyCodeFrameStyle, DEFAULT_SIDE_PANEL_IDS, getSidePanelPanels, parseSidePanelIds } = prefs
+const { applyCodeFrameStyle, applySidePanelPanels, getHiddenTemporarySidePanels, getSidePanelPanels, resolveSidePanelIds, setTemporarySidePanelHidden } = prefs
 const { setLang } = i18nMod
-const { applyConfiguredSidePanelPanels, applySidePanelPanelsFromSettings, TuiPanelRuntime, getHostPanelRuntime } = adapterMod
+const { TuiPanelRuntime, getHostPanelRuntime } = adapterMod
 const { panelStore } = storeMod
 const { panelBridgeRequests } = bridgeMod
 void panelAdapterMod
@@ -132,46 +135,45 @@ check('source/mountPolicy/minColumns forced', entryA !== undefined
   && entryA.definition.source === 'plugin'
   && entryA.definition.mountPolicy === 'active'
   && entryA.definition.minColumns === 28)
-check('enabled CSV gains plugin id', parseSidePanelIds(getSidePanelPanels()).includes(entryA!.definition.id))
+check('registration leaves the stored value untouched', getSidePanelPanels() === 'todo')
 check('own list() summary', panelsA.list().some(p => p.id === entryA!.definition.id)
   && !panelsA.list().some(p => (p as { title?: string }).title === undefined))
 check('ledger bind applied', ledgerRecords().some(r => r.resource?.kind === 'panel' && r.resource?.id === entryA!.definition.id && r.result === 'applied'))
 
-// ── 配置应用不挤掉已注册的面板（profile 路径的时序）────────────────────
-// profile 路径上第三方插件行可能先于 dsh-tui 行 apply，此时面板已注册。
-applyConfiguredSidePanelPanels(DEFAULT_SIDE_PANEL_IDS)
-check('configured CSV keeps a registered panel id', parseSidePanelIds(getSidePanelPanels()).includes(entryA!.definition.id))
-check('configured CSV still enables its own ids', parseSidePanelIds(getSidePanelPanels()).includes('todo'))
-// 变异对照：不并注册集合的调用会把它挤出去。
-applySidePanelPanels(DEFAULT_SIDE_PANEL_IDS)
-check('mutation control: plain CSV application drops it', !parseSidePanelIds(getSidePanelPanels()).includes(entryA!.definition.id))
-applyConfiguredSidePanelPanels(DEFAULT_SIDE_PANEL_IDS)
-check('re-applying the configured CSV restores it', parseSidePanelIds(getSidePanelPanels()).includes(entryA!.definition.id))
+const registeredIds = (): string[] => panelStore.list().map(e => e.definition.id)
+const effectiveIds = (): readonly string[] => resolveSidePanelIds(getSidePanelPanels(), registeredIds())
+const pluginIdA = entryA!.definition.id
 
-// ── /settings 的显式移除必须活得过下一次配置应用 ─────────────────────────
-// /settings 勾选只写文档与 store、不经过 disablePanelIdInStore；每次配置应用回落的
-// CSV 里没有后来注册的面板，没有「显式移除」记录它会被并回来。顺序即真实时序。
-applyConfiguredSidePanelPanels(DEFAULT_SIDE_PANEL_IDS)
+// ── `*` derives the enabled set from the registry (issue #1662 / #1454) ────
+// Registration never writes the setting: under `*` (the default) the panel is
+// enabled because it is registered, and nothing has to be merged back on the
+// next apply.
+applySidePanelPanels('*')
+check('store keeps the raw * sentinel', getSidePanelPanels() === '*')
+check('* enables the registered plugin panel', effectiveIds().includes(pluginIdA))
+applySidePanelPanels('*')
+check('re-applying * is idempotent', effectiveIds().includes(pluginIdA) && getSidePanelPanels() === '*')
+// The contract's other half: an explicit list is exact, so a registered panel
+// that is not listed is hidden (statusBar parity). No union, no inference.
+applySidePanelPanels('todo,jobs')
+check('an explicit list hides an unlisted registered panel', !effectiveIds().includes(pluginIdA))
+check('the explicit list still enables its own ids', effectiveIds().includes('todo') && effectiveIds().includes('jobs'))
+applySidePanelPanels('*')
+check('back under *, the plugin panel returns', effectiveIds().includes(pluginIdA))
+
+// ── an explicit removal is just a list; replaying it changes nothing ──────
 const disposeRemoved = panelsA.register({ apiVersion: 1, id: 'removable', title: 'Removable', component: () => null })
 const removedId = panelStore.list().find(e => e.definition.id.endsWith(':removable'))?.definition.id ?? ''
-check('removal fixture registered', removedId !== '' && parseSidePanelIds(getSidePanelPanels()).includes(removedId))
-// 用户勾掉它：设置编辑走 applySidePanelPanelsFromSettings（先结算移除，再并集）。
-const withoutRemoved = parseSidePanelIds(getSidePanelPanels()).filter(id => id !== removedId).join(',')
-applySidePanelPanelsFromSettings(withoutRemoved)
-check('an explicitly removed registered panel is NOT revived by the configured CSV',
-  !parseSidePanelIds(getSidePanelPanels()).includes(removedId))
-check('the same application still enables the configured ids', parseSidePanelIds(getSidePanelPanels()).includes('todo'))
-// 启动期的 boot settings 应用。
-applyConfiguredSidePanelPanels(DEFAULT_SIDE_PANEL_IDS)
-check('a panel registered at startup still enters the enabled list (P1-3 B item)',
-  parseSidePanelIds(getSidePanelPanels()).includes(entryA!.definition.id))
-check('the explicitly removed one stays removed through the boot apply',
-  !parseSidePanelIds(getSidePanelPanels()).includes(removedId))
-applyConfiguredSidePanelPanels(DEFAULT_SIDE_PANEL_IDS)
-check('the boot apply leaves a startup panel unrecorded as removed (P1-3 B item)',
-  parseSidePanelIds(getSidePanelPanels()).includes(entryA!.definition.id))
-disposeRemoved?.()
-check('plugin unregister removes it from the enabled CSV', !parseSidePanelIds(getSidePanelPanels()).includes(removedId))
+check('removal fixture registered', removedId !== '' && effectiveIds().includes(removedId))
+const withoutRemoved = effectiveIds().filter(id => id !== removedId).join(',')
+applySidePanelPanels(withoutRemoved)
+check('an explicit list stays exact (the removed one is out)',
+  !effectiveIds().includes(removedId) && effectiveIds().includes(pluginIdA))
+applySidePanelPanels(withoutRemoved)
+check('replaying the same settings value does not revive it', !effectiveIds().includes(removedId))
+disposeRemoved()
+check('plugin unregister removes it from the effective set', !effectiveIds().includes(removedId))
+applySidePanelPanels('*')
 
 // descriptor validation
 check('apiVersion gate', panelsA.register({ apiVersion: 2 as never, id: 'v2', title: 'x', component: () => null }) === undefined)
@@ -236,14 +238,22 @@ const disposeSub = panelsA.subscribe(event => {
 const disposeB = panelsB.register({ apiVersion: 1, id: 'bpanel', title: 'B', component: () => null })
 const idB = panelsB.list().find(e => e.id.endsWith(':bpanel'))?.id ?? 'b:none'
 check('anonymous id has a disjoint session namespace', /^session:act[0-9]+:bpanel$/u.test(idB))
-applySidePanelPanelsFromSettings('todo')
-check('saving persistent selection keeps the anonymous panel enabled', parseSidePanelIds(getSidePanelPanels()).includes(idB))
-applySidePanelPanels(parseSidePanelIds(getSidePanelPanels()).filter(id => id !== idB).join(','))
-applySidePanelPanelsFromSettings('todo,jobs')
-check('saving cannot revive a session-only panel toggled off', !parseSidePanelIds(getSidePanelPanels()).includes(idB))
-applySidePanelPanels(getSidePanelPanels() + ',' + idB)
-applyConfiguredSidePanelPanels('todo')
-check('session-only panel can be re-enabled without a saved id', parseSidePanelIds(getSidePanelPanels()).includes(idB))
+// A stored value cannot name a temporary panel, so its membership follows the
+// registry (a saved selection leaves it alone) and closing it is session
+// state that no replay revives.
+applySidePanelPanels('todo')
+check('a saved selection keeps the anonymous panel enabled',
+  resolveSidePanelIds(getSidePanelPanels(), [idB]).includes(idB))
+check('the stored value itself never carries the temporary id', !getSidePanelPanels().includes('session:'))
+setTemporarySidePanelHidden(idB, true)
+applySidePanelPanels('todo,jobs')
+check('a saved selection cannot revive a session-only panel closed this run',
+  !resolveSidePanelIds(getSidePanelPanels(), [idB], getHiddenTemporarySidePanels()).includes(idB))
+setTemporarySidePanelHidden(idB, false)
+applySidePanelPanels('todo,component:' + idB)
+check('no stored spelling can name the temporary panel', !resolveSidePanelIds(getSidePanelPanels(), []).includes(idB))
+check('session-only panel comes back without a saved id',
+  resolveSidePanelIds(getSidePanelPanels(), [idB]).includes(idB))
 panelsA.badge(idA, { level: 'info', unread: 1 })
 panelsB.badge(idB, { level: 'info', unread: 1 })
 check('own badge event delivered + listener crash swallowed', eventsA.some(e => e === 'badge:' + idA))
@@ -252,10 +262,24 @@ disposeCompact?.()
 await new Promise(resolve => setImmediate(resolve))
 check('own unregistered event delivered', eventsA.some(e => e.startsWith('unregistered:') && e.endsWith(':compact-only')))
 const beforeForeign = eventsA.length
+setTemporarySidePanelHidden(idB, true)
+check('a hidden temporary panel leaves the effective set',
+  !resolveSidePanelIds(getSidePanelPanels(), [idB], getHiddenTemporarySidePanels()).includes(idB))
 disposeB()
 await new Promise(resolve => setImmediate(resolve))
 check('foreign unregistered event filtered', eventsA.slice(beforeForeign).every(e => !e.endsWith(':bpanel')))
 disposeSub()
+// Hiding belongs to ONE registration: the same activation re-registering the
+// same panel reuses its session-only id, and a fresh contribution must not be
+// born hidden by the previous one (main's "re-registration is a new
+// contribution", carried over to the run-local set).
+const disposeB2 = panelsB.register({ apiVersion: 1, id: 'bpanel', title: 'B', component: () => null })
+const idB2 = panelsB.list().find(e => e.id.endsWith(':bpanel'))?.id ?? ''
+check('re-registration is a new contribution, not the hidden one',
+  idB2 === idB && resolveSidePanelIds(getSidePanelPanels(), [idB2], getHiddenTemporarySidePanels()).includes(idB2),
+  idB2 + ' hidden=' + JSON.stringify(getHiddenTemporarySidePanels()))
+disposeB2()
+await new Promise(resolve => setImmediate(resolve))
 
 // ── crash disable (store level) ──────────────────────────────────────────
 panelStore.reportError(idA, new Error('crash-1'))
@@ -263,10 +287,10 @@ panelStore.reportError(idA, new Error('crash-2'))
 panelStore.reportError(idA, new Error('crash-3'))
 check('3 crashes disable the panel', panelStore.get(idA)?.disabled === true)
 
-// ── dispose: store entry + CSV + ledger release ─────────────────────────
+// ── dispose: store entry + effective set + ledger release ───────────────
 disposeA?.()
 check('dispose removes store entry', panelStore.get(idA) === undefined)
-check('dispose cleans enabled CSV', !parseSidePanelIds(getSidePanelPanels()).includes(idA))
+check('dispose removes it from the effective set', !effectiveIds().includes(idA))
 check('dispose records ledger release', ledgerRecords().some(r => r.resource?.id === idA && r.result === 'applied' && r.operation === 'release'))
 
 // ── render smoke: crash isolation + disabled card ───────────────────────

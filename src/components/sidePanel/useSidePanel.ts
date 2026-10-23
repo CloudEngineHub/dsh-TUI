@@ -24,12 +24,14 @@ import { actionMatches } from '../../utils/keymap.js'
 import {
   applySidePanelOpen,
   applySidePanelRatio,
+  getHiddenTemporarySidePanels,
   getSidePanelOpen,
   getSidePanelPanels,
   getSidePanelRatio,
   getSidePanelSplitEnabled,
-  parseSidePanelIds,
+  resolveSidePanelIds,
   SIDE_PANEL_ID_PATTERN,
+  subscribeHiddenTemporarySidePanels,
   subscribeSidePanelOpen,
   subscribeSidePanelPanels,
   subscribeSidePanelRatio,
@@ -45,6 +47,7 @@ import {
 } from './dimensions.js'
 import type { SidePanelKeyFlags, SidePanelRuntime } from './types.js'
 import { panelBridgeRequests, panelBridgeState } from './panelBridge.js'
+import { panelStore } from './PanelStore.js'
 
 export type { SidePanelKeyFlags } from './types.js'
 
@@ -104,6 +107,22 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
   const openSetting = useLive(subscribeSidePanelOpen, getSidePanelOpen)
   const ratio = useLive(subscribeSidePanelRatio, getSidePanelRatio)
   const panelsCsv = useLive(subscribeSidePanelPanels, getSidePanelPanels)
+  // The registry half of the enabled set (`sidePanel.panels: '*'`). Subscribe
+  // to panelStore but expose an id-string snapshot: badge/hint events also
+  // rebuild the store's array identity, and a per-delta Chat re-render would
+  // be pure waste — the joined string only changes when a panel registers or
+  // unregisters.
+  const registeredCsv = React.useSyncExternalStore(
+    panelStore.subscribe,
+    () => panelStore.list().map(entry => entry.definition.id).join(','),
+  )
+  // The temporary panels this run is hiding (`/settings` toggles them there,
+  // not in the stored value): a frozen array whose identity only moves when
+  // the set does, so it is a valid snapshot.
+  const hiddenTemporaryIds = React.useSyncExternalStore(
+    subscribeHiddenTemporarySidePanels,
+    getHiddenTemporarySidePanels,
+  )
   const [focus, setFocus] = React.useState<SidePanelFocus>('chat')
   const [zoom, setZoom] = React.useState(false)
   const [activeIdState, setActiveIdState] = React.useState<string | undefined>(undefined)
@@ -127,7 +146,21 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
     },
   }), [])
 
-  const enabledPanelIds = React.useMemo(() => parseSidePanelIds(panelsCsv), [panelsCsv])
+  // ONE derivation of the enabled set, shared by the PanelBar, /panel, the
+  // digit keys, the bridge admission and /settings: the stored value plus the
+  // live registry (issue #1662).
+  const enabledPanelIds = React.useMemo(
+    () => resolveSidePanelIds(
+      panelsCsv,
+      registeredCsv === '' ? [] : registeredCsv.split(','),
+      hiddenTemporaryIds,
+    ),
+    [panelsCsv, registeredCsv, hiddenTemporaryIds],
+  )
+  // Stable callbacks (the bridge subscription is mounted once) read the
+  // latest enabled set through this ref instead of capturing it.
+  const enabledIdsRef = React.useRef(enabledPanelIds)
+  enabledIdsRef.current = enabledPanelIds
   const activePanelId = activeIdState !== undefined && enabledPanelIds.includes(activeIdState)
     ? activeIdState
     : enabledPanelIds[0]
@@ -184,14 +217,14 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
   }, [columns, split])
 
   const openPanel = React.useCallback((id: string, opts?: { readonly focus?: boolean }) => {
-    if (!parseSidePanelIds(getSidePanelPanels()).includes(id)) return
+    if (!enabledIdsRef.current.includes(id)) return
     setActiveIdState(id)
     applySidePanelOpen(true)
     if (opts?.focus !== false) setFocus('panel')
   }, [])
 
   const cyclePanel = React.useCallback((delta: number) => {
-    const ids = parseSidePanelIds(getSidePanelPanels())
+    const ids = enabledIdsRef.current
     if (ids.length === 0) return
     const current = activeIdState !== undefined && ids.includes(activeIdState)
       ? activeIdState
@@ -225,7 +258,7 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
       setZoom(previous => !previous)
       return true
     }
-    if (SIDE_PANEL_ID_PATTERN.test(arg) && parseSidePanelIds(getSidePanelPanels()).includes(arg)) {
+    if (SIDE_PANEL_ID_PATTERN.test(arg) && enabledIdsRef.current.includes(arg)) {
       if (!splitAvailable) return false
       setActiveIdState(arg)
       applySidePanelOpen(true)
@@ -294,7 +327,7 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
       return true
     }
     if (input >= '1' && input <= '9') {
-      const ids = parseSidePanelIds(getSidePanelPanels())
+      const ids = enabledIdsRef.current
       const target = ids[Number.parseInt(input, 10) - 1]
       if (target !== undefined) setActiveIdState(target)
       stop()

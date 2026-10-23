@@ -4,6 +4,8 @@
 `Ctrl+Q` folds running todos; while idle it hides/restores the goal/todo footer. Clicking the idle todo header hides it too. New goal/todo data or another session shows it again. Completed goals leave the footer once idle; their history remains in the Todo side panel.
 
 
+Fullscreen text selection belongs to its starting pane (chat, sidebar or one diff column). Dragging diagonally across rows, double-clicking words and triple-clicking lines retain that ownership. Copy ignores gutters and joins only that pane’s soft wraps, preserving source newlines. Scrolling the other pane does not move or invalidate the selection. Divider dragging resizes without selecting text.
+
 ## Input and global shortcuts
 
 | Key | Behavior |
@@ -120,9 +122,10 @@ results back to the chat screen and add no new behavior.
   jobs`; update detected → `Update available`; usage milestone reached and never starred → `Feed us a
   star`; fallback `Help`). Full screens opened from the launchpad (sessions & workspaces / settings /
   background jobs / the family tree / the wizard) render **above the launchpad** — `Esc` closes them
-  back onto the launchpad (draft, params and focus intact); **the only way off the launchpad into the
-  chat is submitting a non-command line with Enter**. Overlays on the launchpad side (pickers, the
-  command palette) are a **clean cutout** — every cell in the overlay rect is space-filled (host
+  back onto the launchpad (draft, params and focus intact); there are two ways off the launchpad into
+  the chat: submit a non-command line with Enter, or press `Shift+Enter` (`Option+Enter`) in the input
+  to carry the unsent draft over and start a new line at the caret. Overlays on the launchpad side
+  (pickers, the command palette) are a **clean cutout** — every cell in the overlay rect is space-filled (host
   glyphs never bleed through), yet no background color is emitted (no white block; Kitty splash
   art still shows through the terminal-default cells; the chat page's pickers are unaffected).
 - **Tips line**: click to rotate (three tips cycle; the first-run tip has top priority and never rotates);
@@ -723,6 +726,7 @@ When the model invokes the questionnaire tool, its panel temporarily owns the ke
 | `Esc` (from question 1) | Cancel the whole batch; the model receives `ASK_CANCELLED` |
 | `Ctrl+C` | Cancel the whole batch from any question; the model receives `ASK_CANCELLED` (a harness-side abort still reports `ASK_ABORTED`) |
 | `Ctrl+K` | Fold/unfold the ask_user_question questionnaire panel (the ask keeps waiting; while folded, `Esc`/`Ctrl+C` expand first) |
+| `Alt+Up` / `Alt+Down` | Page through question text and details inside their fixed-height area without moving the answer focus; remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the body |
 
 The last row is a free-form input line:
 
@@ -756,8 +760,9 @@ in the review panel (the dedicated decision layout for `intent: plan-review`):
 ## Tool approval
 
 When the permission layer issues an `approval/request`, the approval panel shows the tool
-name, the full command extracted from the paired tool call, and the reason. It temporarily
-owns the keyboard (when a questionnaire is also pending, approval takes priority):
+name and previews the paired tool call's command and reason. Very short terminals use a
+compact layout with the full preview in a fixed-height area. The panel temporarily owns
+the keyboard (when a questionnaire is also pending, approval takes priority):
 
 | Key | Behavior |
 | --- | --- |
@@ -765,6 +770,7 @@ owns the keyboard (when a questionnaire is also pending, approval takes priority
 | `1` / `2` | Allow (this time only) / deny |
 | `Enter` | Submit the focused item |
 | `Esc` / `Ctrl+C` | Deny (fail closed) |
+| `Alt+Up` / `Alt+Down` | Page through the full preview in a compact approval panel on very short terminals without moving the choice focus; fullscreen also supports the wheel over the preview |
 
 The protocol offers only "allow once / deny" — there is **no "always allow"**.
 

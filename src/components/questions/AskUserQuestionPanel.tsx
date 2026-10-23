@@ -29,7 +29,8 @@
 
 import React from 'react'
 import { t } from '../../i18n.js'
-import { Box, Text, useInput, useTerminalSize } from '../../ui.js'
+import { Box, Text, ScrollBox, useInput, useTerminalSize, type ScrollBoxHandle } from '../../ui.js'
+import wrapText from '../../ink/wrap-text.js'
 import { useDeclaredCursor, useNativeCursor } from '../../ink/hooks/use-declared-cursor.js'
 import { Divider } from '../design-system/Divider.js'
 import { POINTER } from '../../terminal-utils/figures.js'
@@ -44,6 +45,7 @@ import { flattenPasteInline } from '../../dsh-adapter/sanitize.js'
 import { readClipboard, type ClipboardRead } from '../../utils/clipboard.js'
 import { createHyperlink } from '../../terminal-utils/hyperlink.js'
 import { listWindow } from '../listWindow.js'
+import { clipPreviewRows, pagePreview } from '../previewRows.js'
 
 /** Unmodified arrows switch questions; Ctrl/Alt/Super/Shift stay caret motion. */
 function isPlainArrow(key: { ctrl?: boolean; meta?: boolean; super?: boolean; shift?: boolean }): boolean {
@@ -66,6 +68,15 @@ const SECRET_MASK = '•'
  * PlanReviewPanel (the two panels share the same input contract).
  */
 const ANSWER_PASTE_MAX_POINTS = 8000
+
+/**
+ * Preview caps (#1664): each field contributes at most these rows to the
+ * shared body viewport, keeping the option list and key hint on screen. A
+ * short terminal shrinks them further through QUESTION_CHROME_ROWS — the
+ * rows the chrome and the panel scaffolding need before any preview text.
+ */
+const QUESTION_PREVIEW_MAX_ROWS = 6
+const QUESTION_CHROME_ROWS = 20
 
 export type AskUserQuestionPanelProps = {
   /** The question to render (from the QuestionStore snapshot). */
@@ -184,7 +195,7 @@ export function AskUserQuestionPanel({
   // Opening Tab and later keys may share one stdin batch. Stop the list
   // synchronously, before the nested editor has had a chance to mount.
   const editingRef = React.useRef(false)
-  const { rows: terminalRows } = useTerminalSize()
+  const { columns: terminalColumns, rows: terminalRows } = useTerminalSize()
   /** Rows: the real options plus the inline input row at the tail. */
   const rowCount = options.length + (hideCustomInput ? 0 : 1)
   // A saved draft wins over the wizard's default selection (returning to a
@@ -260,6 +271,7 @@ export function AskUserQuestionPanel({
   }
   const onInputRow = (): boolean => !hideCustomInput && focusRef.current === options.length
   const [error, setError] = React.useState<string | null>(null)
+  const bodyScrollRef = React.useRef<ScrollBoxHandle | null>(null)
 
   const inputFocused = !hideCustomInput && focusIndex === options.length
   // Chat chrome + panel scaffolding consume twelve rows before the option
@@ -268,16 +280,66 @@ export function AskUserQuestionPanel({
   // lists then use fixed one/two-line rows so listWindow's budget is exact;
   // short questionnaires retain their existing wrapped presentation.
   const linkText = question.link === undefined || question.link === '' ? '' : createHyperlink(question.link)
-  const detailRows = (question.detail === undefined ? 0 : question.detail.split('\n').length + 1)
-    + (linkText === '' ? 0 : question.detail === undefined ? 2 : 1)
+  // The question and its detail are preview text above the option list, and
+  // `wrap` re-flows every long line: counting source lines undercounts the
+  // rows they really take, and neither text had a cap — a long question
+  // pushed the options and the hint off screen with nothing left to answer
+  // (#1664). Pre-wrap to the panel's content width, fold past the cap, and
+  // charge the REAL row count to the option budget below.
+  const contentCells = Math.max(8, terminalColumns - 4)
+  const previewMaxRows = Math.max(2, Math.min(
+    QUESTION_PREVIEW_MAX_ROWS,
+    terminalRows - QUESTION_CHROME_ROWS,
+  ))
+  const questionView = clipPreviewRows(question.question, contentCells, previewMaxRows)
+  const questionBlockRows = questionView.rows.length + (questionView.omitted > 0 ? 1 : 0)
+  // The question's unused allowance flows to the detail — but only the rows
+  // the terminal frees up beyond the chrome floor. On a terminal already at
+  // that floor every preview row is contested, and the cap is what keeps the
+  // option list and the hint on screen; above it a one-line question must not
+  // fold the detail against a budget the question never needed.
+  const sparePreviewRows = Math.max(
+    0,
+    terminalRows - QUESTION_CHROME_ROWS - questionBlockRows,
+  )
+  const detailMaxRows = Math.max(2, Math.min(
+    QUESTION_PREVIEW_MAX_ROWS,
+    previewMaxRows + sparePreviewRows,
+  ))
+  const detailView = question.detail === undefined
+    ? undefined
+    : clipPreviewRows(question.detail, contentCells, detailMaxRows)
+  const detailRows = detailView === undefined
+    ? (linkText === '' ? 0 : 2)
+    : detailView.rows.length + (detailView.omitted > 0 ? 1 : 0) + 1 + (linkText === '' ? 0 : 1)
+  // One viewport keeps the question and its detail independently reachable:
+  // a question without a detail must still be readable beyond its preview.
+  const bodyRows = questionView.rows.length + questionView.omitted
+    + (detailView === undefined ? 0 : detailView.rows.length + detailView.omitted)
+    + (question.detail !== undefined || linkText !== '' ? 1 : 0)
+    + (linkText === '' ? 0 : wrapText(linkText, contentCells, 'wrap').split('\n').length)
+  const previewRows = questionBlockRows + detailRows
+  const bodyScrollRows = bodyRows > previewRows ? Math.max(1, previewRows - 1) : 0
+  const submitRows = multiSelect && fullscreen && (checked.size > 0 || textRef.current !== '') ? 2 : 0
   const reservedRows = 12
     + (question.header === undefined ? 0 : 1)
+    + (questionBlockRows - 1)
     + detailRows
     + (hideCustomInput ? 0 : 1)
     + (error === null ? 0 : 2)
+    + submitRows
   const optionBudget = Math.max(terminalRows - reservedRows, 2)
   const optionHeights = options.map(option => option.description === undefined ? 1 : 2)
-  const windowedOptions = optionHeights.reduce((sum, height) => sum + height, 0) > optionBudget
+  const optionLabels = options.map(option =>
+    option.label + (modelEditor?.edited(option.label) ? ` ${t('provider-model-edited')}` : ''))
+  // Non-windowed rows wrap at their actual text width. Reducing the preview
+  // must not disable windowing just because a multiline description was
+  // counted as one line. Windowed rows below still have fixed 1/2-row heights.
+  const optionCells = Math.max(1, contentCells - 3)
+  const wrappedOptionRows = options.reduce((sum, option, index) =>
+    sum + wrapText(optionLabels[index]!, optionCells, 'wrap').split('\n').length
+      + (option.description === undefined ? 0 : wrapText(option.description, optionCells, 'wrap').split('\n').length), 0)
+  const windowedOptions = wrappedOptionRows > optionBudget
   const optionFocus = Math.min(focusIndex, Math.max(options.length - 1, 0))
   const optionWindow = windowedOptions
     ? listWindow(optionHeights, optionFocus, optionBudget)
@@ -483,6 +545,15 @@ export function AskUserQuestionPanel({
         event.stopImmediatePropagation()
       }
       return
+    }
+    if (bodyScrollRows > 0) {
+      const up = actionMatches('questionDetailUp', input, key)
+      const down = actionMatches('questionDetailDown', input, key)
+      if (up || down) {
+        pagePreview(bodyScrollRef.current, up ? -1 : 1)
+        event.stopImmediatePropagation()
+        return
+      }
     }
     if (key.ctrl && input === 'c') {
       onCancel()
@@ -754,7 +825,8 @@ export function AskUserQuestionPanel({
             : absoluteIndex === optionWindow.end - 1 && optionWindow.end < options.length
               ? '↓'
               : ' '
-        const label = windowedOptions ? option.label.replace(/\s+/gu, ' ').trim() : option.label
+        const optionLabel = optionLabels[absoluteIndex]!
+        const label = windowedOptions ? optionLabel.replace(/\s+/gu, ' ').trim() : optionLabel
         const description = windowedOptions
           ? option.description?.replace(/\s+/gu, ' ').trim()
           : option.description
@@ -784,7 +856,7 @@ export function AskUserQuestionPanel({
                 color={focused ? 'accent' : undefined}
                 wrap={windowedOptions ? 'truncate' : 'wrap'}
               >
-                {label}{modelEditor?.edited(option.label) ? ` ${t('provider-model-edited')}` : ''}
+                {label}
               </Text>
               {description !== undefined && (
                 <Text dimColor wrap={windowedOptions ? 'truncate' : 'wrap'}>
@@ -796,7 +868,7 @@ export function AskUserQuestionPanel({
         )
       })}
       {hideCustomInput ? null : renderInputRow()}
-      {multiSelect && fullscreen && (checked.size > 0 || textRef.current !== '') && (
+      {submitRows > 0 && (
         <Box
           flexDirection="row"
           height={1}
@@ -859,6 +931,18 @@ export function AskUserQuestionPanel({
     />
   }
 
+  const body = (
+    <>
+      <Text bold wrap="wrap">{question.question}</Text>
+      {(question.detail !== undefined || linkText !== '') && (
+        <Box flexDirection="column" marginTop={1}>
+          {question.detail !== undefined && <Text dimColor italic wrap="wrap">{question.detail}</Text>}
+          {linkText !== '' && <Text wrap="wrap">{linkText}</Text>}
+        </Box>
+      )}
+    </>
+  )
+
   return (
     <Box flexDirection="column" marginTop={1} paddingLeft={2} paddingRight={2} width="100%">
       <Box
@@ -876,19 +960,20 @@ export function AskUserQuestionPanel({
             ◈ {question.header}
           </Text>
         )}
-        <Text bold wrap="wrap">
-          {question.question}
-        </Text>
-        {(question.detail !== undefined || linkText !== '') && (
-          <Box flexDirection="column" marginTop={1}>
-            {question.detail?.split('\n').map((line, index) => (
-              <Text key={index} dimColor italic wrap="wrap">
-                {line}
-              </Text>
-            ))}
-            {linkText !== '' && <Text wrap="wrap">{linkText}</Text>}
-          </Box>
-        )}
+        {bodyScrollRows > 0 ? (
+          <>
+            <ScrollBox ref={bodyScrollRef} flexDirection="column" height={bodyScrollRows} flexShrink={0}>
+              {body}
+            </ScrollBox>
+            <Text dimColor wrap="truncate-end">
+              {t('question-detail-scroll', {
+                count: bodyRows - bodyScrollRows,
+                up: effectiveComboDisplay('questionDetailUp'),
+                down: effectiveComboDisplay('questionDetailDown'),
+              })}
+            </Text>
+          </>
+        ) : body}
       </Box>
       {renderOptions()}
       {error !== null && (

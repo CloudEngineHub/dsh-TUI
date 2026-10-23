@@ -84,15 +84,11 @@ export const SETTING_DEFINITIONS = {
     label: 'Default reasoning effort',
     descriptions: { zh: '默认推理强度' },
     group: 'conversation',
-    hint: 'Reasoning-effort level new sessions start on; the current session applies it to its next request too, when the model offers the tier (an unlisted level falls back to the model default). Auto = follow the cordis.yml `effort` pin, then the persisted /effort choice, then the model default.',
-    hintDescriptions: { zh: '新会话起始的推理强度档位；模型提供该档位时，当前会话的下一请求也会应用（模型不提供的档位会静默回落到模型默认）。自动 = 依次跟随 cordis.yml 的 effort 配置、持久化的 /effort 选择、模型默认档。' },
+    hint: 'Choices come from the current backend and model. A saved value absent from that catalog remains visible and stored until you change it. On DSH, Auto follows the persisted /effort choice, then cordis.yml effort, then the model default. On Claude/Codex, Auto at startup and resumed sessions preserve backend preferences; explicitly choosing Auto resets the model default. Explicit changes apply to the next request; unsupported preferences fall back only to a lower offered tier, or the model default, with a notice. While the catalog is loading or unavailable, only Auto is selectable.',
+    hintDescriptions: { zh: '选项来自当前后端和模型目录。目录没有的已存值仍显示并保留，直到你主动修改。DSH 自动依次采用持久化的 /effort 选择、cordis.yml effort 配置、模型默认。Claude/Codex 启动采用自动模式或恢复会话时保留后端偏好；在设置中主动选择自动会重置为模型默认。明确修改会作用于下一请求；不支持的偏好仅向下回落到可用档位，否则回到模型默认，并给出提示。目录加载中或不可用时仅可选自动。' },
     kind: 'select',
     options: [
-      { value: 'auto', label: 'Auto (model default)', descriptions: { zh: '自动（模型默认）' } },
-      { value: 'off', label: 'Off', descriptions: { zh: '关闭' } },
-      { value: 'low', label: 'Low', descriptions: { zh: '低' } },
-      { value: 'high', label: 'High', descriptions: { zh: '高' } },
-      { value: 'max', label: 'Max', descriptions: { zh: '最高' } },
+      { value: 'auto', label: 'Auto', descriptions: { zh: '自动' } },
     ],
   },
   'expandEditor': {
@@ -288,8 +284,8 @@ export const SETTING_DEFINITIONS = {
     label: 'Enabled panels',
     descriptions: { zh: '启用的面板' },
     group: 'side-panel',
-    hint: 'Tick the panels the side panel bar shows: a new tick appends at the end, unticking removes. Panels registered by plugins appear here automatically, and a well-formed id nothing claims yet stays as a checked placeholder. Temporary panels show their title and a run-local number; their checkboxes affect this run only and are never saved. Remove old actN placeholders and select the current panel again. The Advanced row edits persistent ids only (e.g. to reorder). Applies immediately.',
-    hintDescriptions: { zh: '勾选侧栏标签栏要显示的面板：新勾选的追加在末尾，取消即移除。插件注册的面板会自动出现在这里；格式合法但尚无面板认领的 id 会保留为已勾选的占位行。临时面板显示标题和本次运行编号，其勾选只影响当前运行，不保存；旧 actN 占位项应移除后重新选择当前面板。「高级」行仅编辑持久 id（如调整顺序）。立即生效。' },
+    hint: 'Default `*` shows every panel — the built-ins plus plugin panels registered later. Unticking a checkbox writes an explicit list: from then on a panel registered after the fact stays off until ticked (an unlisted registered panel shows unchecked, an unlisted well-formed id stays as a checked placeholder). Temporary panels show their title and a run-local number; their checkboxes affect this run only and are never saved, and an old actN placeholder must be removed and the current panel selected again. The Advanced row edits the raw list (`*` = all, persistent ids only). Applies immediately.',
+    hintDescriptions: { zh: '默认 `*` 显示全部面板——内置面板加上之后注册的插件面板。取消勾选会写成显式列表：此后新注册的面板保持关闭，直到勾选（已注册但未列出的面板显示为未勾选；未列出但格式合法的 id 仍保留为已勾选占位行）。临时面板显示标题和本次运行编号，其勾选只影响当前运行、不保存；旧 actN 占位项应移除后重新选择当前面板。「高级」行编辑原始列表（`*` = 全部，仅持久 id）。立即生效。' },
     kind: 'text',
   },
   'sidePanel.ratio': {
@@ -679,6 +675,18 @@ export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: 
     zh: '提问面板折叠快捷键',
     hintEn: d => `Fold/unfold the pending question panel. Default: ${d}.`,
     hintZh: d => `折叠/展开等待回答的提问面板。默认 ${d}。`,
+  },
+  questionDetailUp: {
+    label: 'Panel preview previous page shortcut',
+    zh: '面板正文向上翻页快捷键',
+    hintEn: d => `Page up through question text or a compact approval preview without moving the choice focus. Default: ${d}.`,
+    hintZh: d => `向上翻阅问卷正文或紧凑审批预览，不移动选项焦点。默认 ${d}。`,
+  },
+  questionDetailDown: {
+    label: 'Panel preview next page shortcut',
+    zh: '面板正文向下翻页快捷键',
+    hintEn: d => `Page down through question text or a compact approval preview without moving the choice focus. Default: ${d}.`,
+    hintZh: d => `向下翻阅问卷正文或紧凑审批预览，不移动选项焦点。默认 ${d}。`,
   },
   expandEditor: {
     label: 'Fullscreen editor shortcut',

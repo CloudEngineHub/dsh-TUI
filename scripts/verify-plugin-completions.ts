@@ -293,4 +293,29 @@ check('100 columns: a name wider than the name column keeps a gap before its des
   /ple\.git\s\S/u.test(gitRow) && gitRow.trimEnd().endsWith('│'), JSON.stringify(gitRow))
 await widePopup.close()
 
+// ── G. `/panel` 的候选与侧栏同一个派生：本次运行隐藏的临时面板不出现 ─────────
+// `/panel` 是第四个读启用集合的地方（侧栏、数字键、勾选屏之外）。临时面板在
+// /settings 里被隐藏后，候选里还留着它，回车只会落到「面板不可用」的兜底提示。
+{
+  const [{ panelStore }, { registerBuiltinPanels }, prefs] = await Promise.all([
+    import('../src/components/sidePanel/PanelStore.js'),
+    import('../src/components/sidePanel/builtinPanels.js'),
+    import('../src/tuiDisplayPrefs.js'),
+  ])
+  registerBuiltinPanels()
+  const id = 'session:act321:scratch'
+  const dispose = panelStore.register(
+    { id, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null },
+    { pluginId: 'session:act321' },
+  )
+  const completion = pluginCompletions([])
+  const offered = (): readonly string[] => completion('/panel ').map(row => row.name.slice('panel '.length))
+  check('/panel offers a registered temporary panel while it is visible', offered().includes(id), JSON.stringify(offered()))
+  prefs.setTemporarySidePanelHidden(id, true)
+  check('/panel drops a temporary panel hidden in /settings', !offered().includes(id), JSON.stringify(offered()))
+  prefs.setTemporarySidePanelHidden(id, false)
+  check('/panel offers it again once it is restored', offered().includes(id), JSON.stringify(offered()))
+  dispose()
+}
+
 console.log(`verify-plugin-completions OK (${passed} checks)`)

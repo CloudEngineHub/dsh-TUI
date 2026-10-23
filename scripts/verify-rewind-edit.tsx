@@ -46,7 +46,7 @@ function appendReply(session: Session, turn: number, message: UserMessage, text 
   session.append('turn/end', { turn, reason: { kind: 'completed' } })
 }
 
-async function verify(fullscreen: boolean, columns: number, entry: 'slash' | 'escape' | 'tree' | 'model'): Promise<void> {
+async function verify(fullscreen: boolean, columns: number, entry: 'slash' | 'escape' | 'tree' | 'model' | 'same-text'): Promise<void> {
   const terminal = new xterm.Terminal({ cols: columns, rows: 30, allowProposedApi: true })
   const stdout = Object.assign(new Writable({
     write(chunk, _encoding, callback) { terminal.write(String(chunk), callback) },
@@ -154,6 +154,22 @@ async function verify(fullscreen: boolean, columns: number, entry: 'slash' | 'es
    * never typed. The anchor therefore skips that leading control.
    */
   const promptShows = (text: string) => viewportLines(terminal).some(line => /^\s*(?:⌸\s*)?❯/u.test(line) && line.includes(text))
+  /**
+   * The composer is the BOTTOM-MOST prompt row. Transcript user rows above it
+   * can carry the same text, so a stale frame after a session swap makes
+   * `promptShows` true while the composer is still empty; the same-text
+   * rewind regression must read the composer itself.
+   *
+   * Compare its CONTENT, not a substring: `includes` also accepted a wrong
+   * refill (`hihi` for `hi`). The row is `⌸ ❯ <padded value>⛶`; drop the
+   * session-entry control, the prompt glyph, the padding and the expand
+   * affordance before comparing.
+   */
+  const composerShows = (text: string) => {
+    const rows = viewportLines(terminal).filter(line => /^\s*(?:⌸\s*)?❯/u.test(line))
+    const row = rows.at(-1)
+    return row !== undefined && row.replace(/^\s*(?:⌸\s*)?❯\s*/u, '').replace(/\s*⛶$/u, '') === text
+  }
   const enter = async () => {
     await sleep(120) // 固定窗:墙钟 Enter deduplication is 80 ms in both Chat and PromptInput
     stdin.write('\r')
@@ -178,6 +194,31 @@ async function verify(fullscreen: boolean, columns: number, entry: 'slash' | 'es
     assert.ok(await settled(() => promptShows('hi')), 'original draft typed')
     await enter()
     assert.ok(await settled(() => delivered.length === 1 && channel.rows.some(row => row.text === 'hi')), 'original prompt sent')
+    if (entry === 'same-text') {
+      /**
+       * Rewind the same message twice without editing. The second fill carries
+       * exactly the text the previous fill consumed; the composer used to
+       * dedupe by text alone and silently drop it (#1665).
+       */
+      const rewindSame = async (expectedForks: number) => {
+        stdin.write('\x1b')
+        await sleep(120) // 固定窗:pacing separate Esc bytes so the parser does not combine them
+        stdin.write('\x1b')
+        assert.ok(await settled(() => shows('Rewind') && shows('last message')), 'same-text picker opened')
+        await enter()
+        assert.ok(await settled(() => shows('Rewind conversation')), 'same-text confirmation opened')
+        await enter()
+        assert.ok(await settled(() => forks.length === expectedForks && composerShows('hi')), `same-text prompt restored (forks ${expectedForks})`)
+      }
+      await rewindSame(1)
+      await enter()
+      assert.ok(await settled(() => delivered.length === 2 && delivered.every(item => item.text === 'hi') && !channel.working), 'same-text unchanged prompt delivered')
+      await rewindSame(2)
+      await enter()
+      assert.ok(await settled(() => delivered.length === 3 && delivered.every(item => item.text === 'hi') && !channel.working), 'same-text restored prompt delivered again')
+      console.log(`PASS rewind same text twice (${fullscreen ? 'fullscreen' : 'inline'}, ${columns} columns)`)
+      return
+    }
     let current = source
     let prompt = 'hi'
     for (let round = 0; round < 2; round++) {
@@ -257,6 +298,13 @@ try {
         }
       }
     }
+  }
+  // #1665: a second rewind of the same text must still refill the composer.
+  try {
+    await verify(false, 80, 'same-text')
+  } catch (error) {
+    failures++
+    console.error('FAIL (inline, 80 columns, same-text)', error)
   }
   assert.equal(failures, 0, `${failures} rewind/model scenarios failed`)
 } finally {
