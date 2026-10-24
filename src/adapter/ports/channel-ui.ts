@@ -142,6 +142,9 @@ export interface ChannelUi {
   readonly cwd: string
   /** Human-facing cwd (remote POSIX path/URI instead of a host alias). */
   readonly displayCwd: string
+  /** Directory the session moved to after it opened (DSH `working_directory`
+   *  tool, worktrees). `cwd` stays the project; undefined = never recorded. */
+  readonly workingDirectory: string | undefined
   /** Current git branch, when the cwd is inside a git worktree. */
   readonly gitBranch: string | undefined
   /** True between turn/start and turn/end — drives the working spinner. */

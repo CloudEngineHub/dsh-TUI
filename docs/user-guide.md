@@ -30,7 +30,7 @@ dsh-tui
 - `dsh-tui safe`：安全模式——只读查看环境、列出 profile 插件并给出修复建议，还能创建干净的救援 profile（见 §5.5）。
 - `dsh --profile dsh-tui`：与 `dsh-tui` 等价的手工启动方式（`/update` 仅此方式可用）。
 - `deepseek-official` 路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 可用标准 profile 的 `deepseek-account` 浏览器授权路由。其他支持的订阅模型可用内置 OAuth 登录。环境自检用 `/doctor`。
-- 主验证 dsh 引擎版本 `0.2.1-rc.2`；兼容列表以 `ADAPTER.md` 为准，列表之外的版本在 logo 页提示版本漂移与对齐命令。
+- 主验证 dsh 引擎版本 `0.2.1-rc.3`；兼容列表以 `ADAPTER.md` 为准，列表之外的版本在 logo 页提示版本漂移与对齐命令。
 - 如果 logo 页出现 ⚠ 版本漂移警告，按提示执行 `npm i -g @deepseek-ai/dsh@<版本>` 对齐 dsh 引擎。
 
 ### 1.2 首次启动你会看到
@@ -318,7 +318,7 @@ dsh-tui
 | `/workspace` | `resume` / `rename <名称>` / `open <路径或URI>` | 管理工作区；`open` 支持绝对路径、file URI、插件 scheme |
 | `/clear` | 无 | 清空当前会话视图（重置展开/选择状态） |
 | `/compact` | 无 | 压缩会话历史（无可压缩内容时会提示） |
-| `/export` | 无 | 导出会话为 Markdown 到工作目录 |
+| `/export` | 无 | 导出会话为 Markdown 到会话启动时的项目目录（不跟随 Agent 的 `working_directory` cd） |
 | `/btw` | `<问题>` | 侧问：单轮、无工具、不打断主回合、不写历史 |
 | `/trace` | 无 | 打开轨迹场景（同 `Ctrl+T`） |
 | `/rewind` | 无 | 回退选择器（同空输入双击 Esc 的时间回溯）；**回合运行中会先取消当前回合**再回溯 |
@@ -406,7 +406,7 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 | 恢复 | `/resume`（同 `/home` `/agentview` `/bg` 与输入框行首 `⌸`） | 三合一**会话管理界面**：`←/→` 切栏、打字筛选、`Enter` 进入、`Ctrl+N` 新建、`Ctrl+X` 停后台会话、行内 ★/☆ 固定。切换只是**停放**，回合继续跑；被其他终端占用的会话标红进不去（详见 §2.7） |
 | 重命名 | `/rename <标题>` | 立即改名并持久化（写入 session/title 事件，会话管理界面里能读回） |
 | 压缩 | `/compact` | 手动触发 compaction；**回合运行中拒绝**；minimal preset 下不可用；压缩点以 Divider 摘要行呈现 |
-| 导出 | `/export` | 从完整 session log 导出 Markdown（含 thinking 与工具调用分节），文件 `dsh-tui-export-<时间戳>.md` 落在当前会话 cwd |
+| 导出 | `/export` | 从完整 session log 导出 Markdown（含 thinking 与工具调用分节），文件 `dsh-tui-export-<时间戳>.md` 落在会话启动时的项目 cwd（不跟随 Agent cd） |
 | 清屏 | `/clear` | 只清视图，不动会话日志 |
 | 停止 | 会话管理界面 `Ctrl+X` | 停止光标所在的**后台**会话；当前终端正在用的会话停不了（想退出整个 TUI 用 `/exit` 或双击 `Ctrl+C`） |
 | 退出 | `/exit`（或 `/quit` `/q`） | 空闲 `Ctrl+C` 双击或 `Ctrl+D` 双击也可退出；工作中中断迟迟不收敛时再按 `Ctrl+C`/`Ctrl+D` 强制退出 |
@@ -546,7 +546,7 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
   cost（`≈¥0.05 谷`，**本会话估算**：包含子代理用量，按各自模型 × 峰值/空闲 × 缓存分项计价；
   hover 拆「主会话 ¥ / 子代理 ¥ / 未计价 N tok」；非官方/未收录模型只显示 token 并标注未计价；
   **估算是参考，以平台账单为准**）
-- 右组：git 分支（**跟随工作树 HEAD**——别处切分支约 1 秒内反映到界面，detached HEAD 时清空）→ 工作目录（紧凑模式仅 basename）→ 会话标题 → 短会话 ID（`#` + 前 8 位，方便 `--resume` 定位）
+- 右组：git 分支（**跟随工作树 HEAD**——别处切分支约 1 秒内反映到界面，detached HEAD 时清空）→ 工作目录（紧凑模式：未移动时显示项目名；项目内移动显示 `项目›相对路径`，项目外移动显示 `项目→路径`）→ 会话标题 → 短会话 ID（`#` + 前 8 位，方便 `--resume` 定位）
 - `statusBar.compact` 时左右合并为单行。
 - **插件底栏字段**：插件可通过 `ctx.tuiStatus.setField` 贡献字段（三槽：左组末尾 / 右组开头 / 右组末尾，可选 hover 详情与全屏点击）；`statusBar.pluginFields`（默认开）可一次关掉全部插件字段，关闭不会卸载插件。
 - **逐字段启停与排序**：`/settings → Status bar → 插件底栏字段名单`（`statusBar.pluginFieldsOrder`）把字段按三槽分组列出，逐条勾选，并用底部「高级」行调整顺序。值形如 `build,ci;git;pet`——恰好三组（`;` 分隔），组序号即槽位、组内顺序即显示顺序；列进名单的字段跟随所在组（覆盖插件声明的槽）。留空 = 一个都不显示；`*`（默认）= 全部（含以后注册的字段，按声明槽与注册序）。从 `*` 进入高级行编辑会预填三组骨架，原样保存不改变模式；名单固定后新注册的字段默认不出现，需要勾选。

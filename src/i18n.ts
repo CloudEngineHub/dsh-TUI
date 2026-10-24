@@ -1454,17 +1454,19 @@ const dict = {
     zh: '关闭：/plugin disable {{bundle}}',
     en: 'Disable: /plugin disable {{bundle}}',
   },
+  // 「用途」一行只回答「开完多出什么」，命令只留躲不掉的那一个：机制（索引在内存、
+  // 极简模式如何取舍）与迁移细节都属于 README，这一屏是目录而不是说明书。
   'plugins-experimental-team-hint': {
-    zh: '用法：服务运行后 /team status',
-    en: 'Use: /team status once the service runs',
+    zh: '用途：Agent 分工合作，/team status 看状态',
+    en: 'Use: agents divide the work; /team status shows the roster',
   },
   'plugins-experimental-auto-review-hint': {
-    zh: '用法：在 /permission 选择「自动授权审查」',
-    en: 'Use: pick Auto review in /permission',
+    zh: '用途：/permission auto，模型自主审批',
+    en: 'Use: /permission auto — the model approves on its own',
   },
   'plugins-experimental-session-search-hint': {
-    zh: '用法：开启后 Agent 多 5 个只读检索工具，可搜本工作区历史会话与事件、看溯源与全文；首次搜索才建内存索引（不落盘）；内核预设「极简模式」只保留 shell，不显示这 5 个工具。',
-    en: 'Use: enabling gives every Agent 5 read-only tools over past sessions in this workspace (search, lineage, full event read); the index is in-memory and builds on the first search; Minimal keeps its single shell tool and hides these.',
+    zh: '用途：Agent 能翻本工作区的历史会话',
+    en: 'Use: agents can browse past sessions in this workspace',
   },
   'plugins-bundles-header': { zh: '已装 bundle（数据来自 profile 插件服务）：', en: 'Installed bundles (from the profile plugin service):' },
   'plugins-bundles-official': { zh: '安装自带', en: 'Official (installation-supplied)' },

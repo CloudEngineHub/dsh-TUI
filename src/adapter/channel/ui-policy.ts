@@ -182,6 +182,7 @@ export const CHANNEL_UI_PROPERTIES = [
   'subagentCost',
   'cwd',
   'displayCwd',
+  'workingDirectory',
   'gitBranch',
   'working',
   'compaction',

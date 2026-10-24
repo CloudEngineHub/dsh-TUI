@@ -130,6 +130,16 @@
         "workflow-ptc"
       ],
       "insertsSharedWithWebApp": []
+    },
+    "0.2.1-rc.3": {
+      "disablesBeyondWebApp": [
+        "tool-ralph"
+      ],
+      "webAppDisablesBeyondTui": [
+        "tool-plugin-manager",
+        "workflow-ptc"
+      ],
+      "insertsSharedWithWebApp": []
     }
   }
 }

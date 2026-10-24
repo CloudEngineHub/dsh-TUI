@@ -1289,6 +1289,7 @@ const GROUPS = {
     ["verify-live-session", ['node', '--import', 'tsx/esm', 'scripts/verify-live-session.ts']],
 // /fork 的继承 delivery marker 必须能经真实 V4 冷读和嵌套恢复校验。
     ["verify-fork-resume", ['node', '--import', 'tsx/esm', 'scripts/verify-fork-resume.ts']],
+    ["verify-working-directory", ['node', '--import', 'tsx/esm', 'scripts/verify-working-directory.ts']],
 // /model 保留会话与自动标题资格；路由及其异步快照跟随停放中的 agent。
     ["verify-session-title-lineage", ['node', '--import', 'tsx/esm', 'scripts/verify-session-title-lineage.ts']],
     ["verify-model-route-lifetime", ['node', '--import', 'tsx/esm', 'scripts/verify-model-route-lifetime.ts']],

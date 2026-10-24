@@ -20,6 +20,8 @@ import { actionMatches, effectiveComboDisplay, primaryComboString } from '../uti
 import { formatTokens } from '../terminal-utils/format.js'
 import { formatClock } from '../trajectory/format.js'
 import { homeDir } from '../utils/paths.js'
+import { displayWorkingDirectory } from '../sessions/format.js'
+import { sessionWorkingDirectory } from '../channel/working-directory.js'
 import { execFileNoThrow } from '../utils/execFileNoThrow.js'
 import type { LlmModelInfo, LlmProviderInfo } from '../adapter/ports/channel-view.js'
 import { cleanBlockLines, cleanCommandReport, cleanRenderText, cleanScalarText } from '../dsh-adapter/sanitize.js'
@@ -1940,14 +1942,16 @@ export function Chat({
    * in the effect below) resolves every clickable target the transcript
    * renders — http(s) links open the browser, `dsh-file:`/`file://` paths
    * open the file-action menu. `dsh-file:` payloads are RAW display paths
-   * (possibly relative), so they resolve against the CURRENT channel cwd
-   * at click time (read through a ref so this callback keeps a stable
-   * identity — it is threaded into memoized row components).
+   * (possibly relative), so they resolve against the session's CURRENT
+   * directory at click time — where it moved after opening, else its cwd
+   * (read through a ref so this callback keeps a stable identity — it is
+   * threaded into memoized row components).
    */
-  const cwdRef = React.useRef(channel.cwd)
+  const currentCwd = sessionWorkingDirectory(channel)
+  const cwdRef = React.useRef(currentCwd)
   React.useEffect(() => {
-    cwdRef.current = channel.cwd
-  }, [channel.cwd])
+    cwdRef.current = currentCwd
+  }, [currentCwd])
   const openFileActions = React.useCallback((rawPath: string): void => {
     const resolved = resolveTargetPath(rawPath, cwdRef.current)
     // Whether the target is a directory decides the first menu row's label
@@ -3637,7 +3641,7 @@ export function Chat({
           `${t('status-model', { model: channel.model })}${channel.reasoningEffort ? ` · ${capitalize(channel.reasoningEffort)} effort` : ''}`,
           `${t('status-state', { state: channel.working ? t('status-working') : t('status-idle') })}`,
           `${t('status-session', { id: channel.agentId })}`,
-          `${t('status-dir', { cwd: channel.displayCwd })}${channel.gitBranch ? ` · ${channel.gitBranch}` : ''}`,
+          `${t('status-dir', { cwd: displayWorkingDirectory(channel) })}${channel.gitBranch ? ` · ${channel.gitBranch}` : ''}`,
           t('tokens-session-total', {
             input: formatTokens(channel.tokens.input),
             output: formatTokens(channel.tokens.output),

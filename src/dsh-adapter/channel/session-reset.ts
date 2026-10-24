@@ -9,6 +9,7 @@ export type SessionResetState = Pick<
   | 'goal'
   | 'sessionTitle'
   | 'sessionColor'
+  | 'workingDirectory'
   | 'tokens'
   | 'mainCost'
   | 'subagentCost'
@@ -55,6 +56,7 @@ export function resetSessionProjection(
   state.goal = undefined
   state.sessionTitle = ''
   state.sessionColor = ''
+  state.workingDirectory = undefined
   state.tokens = {
     input: 0,
     output: 0,

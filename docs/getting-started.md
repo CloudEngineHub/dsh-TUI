@@ -121,6 +121,10 @@ dsh --profile dsh-tui
 命令从当前目录启动，因此 Agent 的默认工作区也是当前目录。进入目标项目目录后再
 启动即可。
 
+DSH 0.2.1 起，Agent 可以把会话切到别的目录（`working_directory` 工具或 Git
+worktree）。状态栏、Git 分支、`@` 补全和 `!` 命令会跟随这个目录，`/resume` 后
+也一样；会话仍登记在启动时的项目下。
+
 Windows 仓库检出还提供：
 
 ```bat

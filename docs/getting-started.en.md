@@ -114,6 +114,11 @@ dsh --profile dsh-tui
 The process starts in the current directory, which is also the Agent's default
 workspace. Change into the target project before starting it.
 
+On DSH 0.2.1 and later the Agent can move its session to another directory
+(the `working_directory` tool, or a Git worktree). The status line, Git branch,
+`@` completion and `!` commands follow that directory, including after
+`/resume`. The session stays registered under the project it started in.
+
 On Windows, the checkout also provides:
 
 ```bat

@@ -67,6 +67,8 @@
 
 工作区侧栏与会话管理器按同一规则计数：包含当前会话，排除空日志、子代理、当前分支祖先及归档会话。已登记但无可见会话的工作区保留为零；加载与读取失败单独显示，按 `r` 刷新。
 
+DSH 0.2.1 起，Agent 把会话切到别的目录（`working_directory` 工具或 Git worktree）后，状态栏、Git 分支、`@` 补全、`!` 命令、点击的路径、技能命令与已加载上下文都会跟随，`/resume` 后也一样；会话仍登记在启动时的项目下。移动前已渲染的卡片里的相对路径，在移动后点击时按会话当前目录解析；绝对路径不受影响。
+
 全屏鼠标选区归属于手势起始栏，包括聊天、侧栏及左右 diff。对角拖选、选词与选行只复制该栏；各栏软换行独立拼接，保留原文换行；拖动分隔线只调整宽度。
 
 ## 界面预览
@@ -115,10 +117,10 @@
 
 前置条件：安装 [Node.js](https://nodejs.org/zh-cn) 与 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。`deepseek-official` API key 路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 的标准 profile 也可用 `/auth login deepseek-account` 登录，再通过 `/model` 选择独立的账号路由。其他支持的账号可在启动后通过 `/provider` 或 `/auth` 登录。
 
-主适配目标为 DSH `0.2.1-rc.2`，已接入新版 Shell API、V4 会话消息、声明式预设与
+主适配目标为 DSH `0.2.1-rc.3`，已接入新版 Shell API、V4 会话消息、声明式预设与
 profile 设置；旧受支持版本保留兼容路径。迁移说明见[配置参考](docs/configuration.md)。
 
-DSH rc.2 下还可在 `/settings` 选择 DeepSeek 搜索 / 抓取 API、修改端点与结果数。
+DSH 0.2.1-rc.2 及之后还可在 `/settings` 选择 DeepSeek 搜索 / 抓取 API、修改端点与结果数。
 分区支持自定义 Loader 行 ID，可直接输入 API key，密钥以掩码显示并保存到 DSH 凭据库。
 官方 Flash 模型显示 `1017` 发布标记，模型 ID 仍为 `deepseek-flash`。
 
@@ -153,7 +155,7 @@ TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 
 
 自动化入口：`dst -p "任务"`、`dst run --json`、`dst session list --json`。
 独立引擎不加载 TUI，也不继承其 profile/偏好；执行与查询仍由官方 DSH
-headless/服务拥有（当前验证 0.2.0-rc.2 与 0.2.1-rc.2）。`dst cli --help` 查看全部命令，
+headless/服务拥有（当前验证 0.2.0-rc.2、0.2.1-rc.2 与 0.2.1-rc.3）。`dst cli --help` 查看全部命令，
 `dst dsh <参数...>` 原样转交官方。协议、限制、会话恢复边界与
 Node/Python/PowerShell 示例见[自动化 CLI](docs/cli.md)。
 
@@ -298,7 +300,7 @@ teammate。在 teammate 会话里看不到其他 teammate 的运行状态，确�
 计数。团队记录留在会话里，再次开启时恢复。
 
 如果运行中的 DSH 不自带这个包（`/plugin list` 不显示它），先把 DSH 换到支持团队包的
-版本线（`0.2.1-rc.2`、`0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2`）；需要显式装进
+版本线（`0.2.1-rc.3`、`0.2.1-rc.2`、`0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2`）；需要显式装进
 profile 时用 `dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@<你的 DSH 版本>`——团队包与 DSH
 同步发版、对 DSH 的 peer 是精确版本，版本必须完全一致。
 

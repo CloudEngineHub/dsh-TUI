@@ -211,6 +211,9 @@ export type AgentEvent =
   | { readonly type: 'session.title'; readonly title: string; readonly source: 'user' | 'auto' }
   /** The session accent colour changed; `''` clears to the default. */
   | { readonly type: 'session.color'; readonly color: string }
+  /** The session's effective working directory changed; the project it was
+   *  opened in (`session.ready.cwd`) stays its identity. */
+  | { readonly type: 'session.cwd'; readonly cwd: string }
   /** The backend reset the conversation in place (Claude `conversation_reset`). */
   | { readonly type: 'session.reset'; readonly trigger: string }
   /** The backend's session status changed. */
