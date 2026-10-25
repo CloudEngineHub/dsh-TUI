@@ -47,7 +47,7 @@
 - **任务完成通知** — DSH、Claude、Codex 的实时任务成功结束，且没有排队的后续输入或活动目标时提醒。标题为「dsh-TUI · 任务已完成」，正文显示本轮最新回复的单行纯文本摘要（去掉 Markdown 样式，最多 200 字符）；OSC 777/9 还会按包含标题和协议开销的 2048 字节预算截短，保留完整字素；没有回复时只显示标题，BEL 只响铃。`/settings` → 对话：`taskNotifications` 可选 `unfocused`（默认，仅失焦）、`always`（每次完成）、`off`；`notificationMethod` 可选 `auto`（默认）、`osc9`、`bel`、`windows`。自动模式在 Ghostty/WezTerm（OSC 777）与 Kitty（OSC 99）分别显示标题与正文；iTerm2/Warp 与显式 `osc9` 将标题放在正文前；其他终端使用响铃，实际提醒取决于终端的通知/响铃设置。在本地 Windows 上，`auto` 解析为 `windows`，即系统原生通知：任务完成时弹出 toast；首次弹出会注册当前用户的 AppUserModelID（写 HKCU），弹出比任务结束晚约 3 秒（零安装路线要付的 PowerShell 冷启动代价）；DSH 会话所在运行中 profile 的外部 DSH 通知插件已启用且处于 active 时，dsh-TUI 让位（不弹也不响）；仅安装但已禁用的插件不会吞掉提醒；注册写不进去时回落到响铃，不会静默。SSH 会话的 `auto` 保留所连接终端的通知协议；显式 `windows` 仍选择运行主机的原生通知。tmux 的 OSC 通知需要 `set -g allow-passthrough on`，焦点报告需要 `set -g focus-events on`。不支持焦点报告的终端可选 `always`。回放、取消和失败不通知；inline 与 fullscreen 均支持。
 - **LaTeX 公式** — `$…$` 与 `$$…$$` 公式转成 Unicode 文本，块级公式里的分数与上下限竖排；`mathRendering: image` 时在支持图形的终端里把块级公式与能压成一行的行内公式排成终端图片。
 - **时间轴** — 全部回合可点；右栏时间线 / 滚动条 / 隐藏。
-- **侧栏面板** — `Ctrl+B` 在聊天右侧展开面板列，拖拽分隔线即可调宽，默认启用全部 8 个内置面板，之后注册的插件面板也默认启用（`sidePanel.panels: '*'`；在 `/settings` 取消勾选会改成显式列表）；顶部以各面板符号显示未选中的页面，悬停显示名称。终端够宽才分栏，窄屏与 inline 模式保持整屏面板。
+- **侧栏面板** — `Ctrl+B` 在聊天右侧展开面板列，拖拽分隔线即可调宽，默认启用全部 8 个内置面板，之后注册的插件面板也默认启用（`sidePanel.panels: '*'`；在 `/settings` 取消勾选会改成显式列表）；顶部以各面板符号显示未选中的页面，悬停显示名称。终端够宽才分栏，窄屏与 inline 模式保持整屏面板。`todo` 面板里长目标按面板宽度完整换行、状态单独一行；内容超出视口时，聚焦面板后用 `↑`/`↓` 或滚轮逐行滚动（全部待办也随滚动展开）（聊天页底部的紧凑目标行仍是单行省略 + 悬停全文）。
 - **实时状态** — 工作动画、上下文条、TPS、缓存命中率、推理强度、token、本会话费用估算（主会话 + 子代理）、Git 与会话信息。标题、轨迹条和会话状态动画独立于正文更新，在空闲或失焦时暂停。
   上下文条的填充长度跟随后端占用量，颜色按内容构成估算；压缩后清理过期估算，缺少分类时显示单块已用区域，条和 ctx 字段的悬停明细都报实测已用量。
 - **唯一的会话管理界面** — `/resume` `/home` `/agentview` `/bg` `⌸`。
@@ -525,7 +525,7 @@ pnpm smoke
 
 这三个动作**没有取消面**——服务不提供——所以 `esc` 只关面板，写入照旧跑完并把结果写进转录。启用与关闭在命令行也没有动词（那两件事由服务写 profile 自己的文件），卸载也不会删你自己的数据：`~/.dsh-tui` 下还剩什么只报告一次，删不删由你决定。
 
-`/plugin list` 除了你装的额外插件，还会列出 DSH 安装自带、默认关闭、本应用已适配的实验性功能（当前是智能体团队、自动授权审查与会话搜索），每一项都给出开启与用法；运行中的 DSH 不自带该包时不显示这一段。
+`/plugin list` 除了你装的额外插件，还会列出 DSH 安装自带、默认关闭、本应用已适配的实验性功能（当前是智能体团队、自动授权审查、会话搜索与 Git 工作树），每一项都给出开启与用法；运行中的 DSH 不自带该包时不显示这一段。
 
 ## 文档索引
 
@@ -561,6 +561,8 @@ pnpm smoke
 **自动授权审查**（DSH，实验性）：`/plugin list` 会列出它；用 `/plugin enable @deepseek-ai/dsh-experimental-auto-review` 开启后，`auto` 预设（显示为「自动授权审查」，带 `EXP` 标记）即时出现在 `/permission` 及其补全里，移除插件后即时消失。它只对当前会话生效：模型在每次工具调用执行前审查，没有文件沙箱，每次调用额外一次模型请求；其审批显示本地化原因，子代理中的拒绝显示为「自动授权审查拒绝，未执行」。在选择器里选中它会先出风险确认（`Enter` 启用，`Esc` 返回；全屏下「启用 / 返回」两行可点击）；手敲 `/permission auto` 直接切换。当前会话选过它一次之后，选择器不再弹确认，Shift+Tab 也不再跳过它。
 
 **会话搜索**（DSH，实验性）：`/plugin list` 会列出它；用 `/plugin enable @deepseek-ai/dsh-experimental-session-search` 开启后，Agent 多出 5 个只读检索工具（`session_search`、`session_event_search`、`session_trace`、`session_event_trace`、`session_event_read`），可检索同一工作区的历史会话——跨会话访问要求 `cwd` 完全一致。索引只在内存里，首次搜索时建立，不落盘。本应用让内核的极简模式保持它那一个持久 shell 工具，因此极简模式既不显示这 5 个工具，也不显示它们的用法指导。
+
+**Git 工作树**（DSH，实验性）：`/plugin list` 会列出它；用 `/plugin enable @deepseek-ai/dsh-experimental-tool-worktree` 开启后，Agent 多出 `create_worktree` 工具：在当前仓库的 `.agents/worktrees/<名称>` 下新建 Git 分支与工作树（基于 `HEAD` 或指定的本地版本；未提交的改动留在原工作区），再把会话切进去——状态栏、Git 分支与 `@` 补全随之跟随，会话仍登记在原项目下。工具卡显示为 `Worktree("<分支>")`，正文是工作树路径与基于的版本。不会自动清理：工作树用 `git worktree remove <路径>` 删除，分支要另外用 `git branch -D <分支>` 删除（Agent 用 `working_directory` 切回；工作树删除后，下一次请求会把会话带回项目）。分支没删时，再用同名调用 `create_worktree` 会失败。在工作树里再调用，新工作树会嵌套建在当前工作树下。切换不改变文件权限，也不影响已打开的终端。本应用对内核的极简模式与随包的 liangshen 预设隐藏 `create_worktree`：它们的持久 shell（liangshen 在 macOS / Linux 上）停在启动时的目录，切换后仍会改原工作区的文件。
 
 **上游断链自动重试**（DSH）：会话每次绑定（启动、`/model` 切换、resume）时，只为**当前实际使用的渠道**播种一份重试策略——最多重试 5 次、失败码覆盖传输类中断（含 `STREAM_CLOSED`，即上游流被掐断）——写入官方 `llm-pi-ai` settings 分节（内核 `llm-retry` 插件执行的就是这份策略）。只补未声明 `retryPolicy` 的渠道、从不写闲置渠道；已显式声明的不会被覆盖；cordis.yml 里 `upstreamRetry: false` 可整体关闭。
 

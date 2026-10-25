@@ -275,7 +275,7 @@ one-column seam between the two surfaces.
   chat-focused → focus the panel; panel-focused → close and return to the chat.
 - **Panel keys**: `Esc` steps back to the input (the panel stays open) · `←`/`→` or `[`/`]` switch
   panels · `1`-`9` jump to the Nth · `z` or `Alt+Z` zoom · `+`/`-` resize (`+` widens the panel by 4 columns) · `↑`/`↓`/`PgUp`/`PgDn`
-  go to the active panel (jobs selects and scrolls with them). Keys the panel does not take never
+  go to the active panel (jobs selects and scrolls with them; the todo panel scrolls a long goal with `↑`/`↓`). Keys the panel does not take never
   reach the chat, while `Ctrl+C`/`Ctrl+D`/`Ctrl+L` and the other Ctrl combos still do.
 - **Mouse**: click the chat column to focus the chat, click the panel column to focus the panel;
   clicking a tab on the bar switches to that panel (hover highlights it), and the `⤢` on its right
@@ -284,7 +284,7 @@ one-column seam between the two surfaces.
   at least 64 columns and the panel at least 28. Dragging exits zoom, preserves keyboard focus,
   and keeps the width for the current session. Text drags starting in chat select only chat;
   drags starting inside the panel can select panel text.
-- **Panels**: by default (`sidePanel.panels: '*'`) every panel is enabled — the eight built-ins plus plugin panels registered later; change it in `sidePanel.panels` or the `/settings` checkboxes. `todo` (Goals/Todos — with a split it moves here from above the input), `jobs`
+- **Panels**: by default (`sidePanel.panels: '*'`) every panel is enabled — the eight built-ins plus plugin panels registered later; change it in `sidePanel.panels` or the `/settings` checkboxes. `todo` (Goals/Todos — with a split it moves here from above the input; a long goal wraps to the panel width with its phase on a separate row, and `↑`/`↓` or the wheel scrolls the whole goal and every todo when the panel is focused), `jobs`
   (background jobs; clicking a job card in the transcript focuses that job here), `agents`
   (subagent dashboard and detail: Enter opens the detail, Esc steps back), `companion`
   (the pet — its mood follows
@@ -517,7 +517,7 @@ Keys are in §2.7. Key points:
 - `/plan` `/goal` `/feedback` `/permission` come from the DSH registry, merged into the `/` menu.
 - **Goals/Todos panel appears automatically**: when the model writes a goal/todo, it renders above the input
   (🎯 goal + phase badge + tree todo), no action needed; with a split it moves to the `todo` panel on the right (see §2.8).
-  The goal bar keeps a one-line summary: hovering truncated goal text reads the whole objective, and a bare `/goal` prints the
+  The goal bar keeps a one-line summary: hovering truncated goal text reads the whole objective (the right-column `todo` panel wraps the whole goal instead and scrolls), and a bare `/goal` prints the
   full status (objective, phase, rounds or budget, available commands) as a `/plugins`-shaped transcript block — inline mode has
   no pointer, so a long objective is read from that block.
 
