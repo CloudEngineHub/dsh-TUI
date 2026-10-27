@@ -1515,6 +1515,10 @@ const dict = {
     zh: '回合正在运行，先结束它（或 /new）再装插件：安装会改动 profile 并触发应用／热重载',
     en: 'A turn is running; finish it (or /new) before installing: an install changes the profile and applies or hot-reloads plugins',
   },
+  'plugins-install-grant-busy': {
+    zh: '回合正在运行，先结束它（或 /new）再授予：授权会在下一次决策立即生效',
+    en: 'A turn is running; finish it (or /new) before granting: the grant takes effect on the next decision',
+  },
   'plugins-install-inspect': { zh: '将要安装：{{spec}}（{{kind}} · {{bundle}}）', en: 'About to install: {{spec}} ({{kind}} · {{bundle}})' },
   'plugins-install-trusted': {
     zh: '嫡系（feed 命中）：{{name}}@{{version}} —— 跳过装包信任确认；仍记 effect ledger，仍在 /plugin 列表可见',
@@ -1587,10 +1591,60 @@ const dict = {
     zh: '提醒：注册表里的包在装上之前无法判定是否声明了 TUI 贡献；若未声明，它不会作为后端/贡献出现，并会在 /plugin 列表里带常驻标签。',
     en: 'Heads up: a registry package’s declaration cannot be read before it lands; if it declares none, it will not appear as a backend/contribution and /plugin will tag it.',
   },
+  // ── 授权写入（grant-file.ts / 装链路 / 启停链路共用）──
+  'plugins-grant-reason-corrupt': { zh: '授权文件无法解析', en: 'the grants file cannot be parsed' },
+  'plugins-grant-reason-unreadable': { zh: '授权文件无法读取', en: 'the grants file cannot be read' },
+  'plugins-grant-reason-write-failed': { zh: '授权文件写入失败', en: 'the grants file could not be written' },
+  'plugins-grant-write-refused': {
+    zh: '授权未写入（{{reason}}）：{{file}} —— 安装/启用继续进行，授权可在 /plugin 的授权矩阵里手工补齐。',
+    en: 'No grant was written ({{reason}}): {{file}} — the install/enable goes on; add the rule by hand from the /plugin grant matrix.',
+  },
+  'plugins-grant-unknown-skipped': { zh: '跳过宿主不认识的权限：{{names}}', en: 'Skipped permissions this host does not know: {{names}}' },
+  'plugins-install-granted': { zh: '已按声明授予 {{count}} 项权限（{{id}}）', en: 'Granted {{count}} declared permission(s) ({{id}})' },
+  'plugins-install-granted-silent': {
+    zh: '已按包内声明自动授予 {{count}} 项权限（{{id}}）',
+    en: 'Granted {{count}} declared permission(s) automatically ({{id}})',
+  },
+  'plugins-grant-unapplied': {
+    zh: '以下授权已写入但未生效（scope 不被接受或被 deny 覆盖）：{{scopes}}',
+    en: 'These rules were written but do not take effect (unsupported scope, or outranked by a deny): {{scopes}}',
+  },
+  'plugins-grant-rolled-back': { zh: '已回滚本次写入的授权', en: 'The grant written for this run was rolled back' },
+  'plugins-grant-rollback-failed': {
+    zh: '授权已写入但未能回滚：文件已被改动，请到 /plugin 的授权矩阵核对。',
+    en: 'The grant was written but could not be rolled back: the file changed meanwhile; check the /plugin grant matrix.',
+  },
+  'plugins-install-grant-ask': {
+    zh: '该组件（{{id}}）已装上。下面这些权限写在包内声明里：现在授予吗？（授权是行为约束，不是安全隔离）',
+    en: 'The component ({{id}}) is installed. These are the permissions it declares: grant them now? (Grants are behavioural constraints, not a security boundary.)',
+  },
+  'plugins-grant-list-title': {
+    zh: '要授予的权限（按包内声明，逐字使用其 scope）',
+    en: 'Permissions to grant (as declared, with the declared scope verbatim)',
+  },
+  'plugins-grant-list-title-revoke': {
+    zh: '将撤销的权限（按包内声明，按权限名撤销）',
+    en: 'Permissions to revoke (declared names; every scope of each)',
+  },
+  'plugins-grant-default-allow': { zh: '默认允许', en: 'default allow' },
+  'plugins-grant-default-deny': { zh: '默认拒绝', en: 'default deny' },
+  'plugins-grant-granted': { zh: '✓已授权', en: '✓granted' },
+  'plugins-grant-not-granted': { zh: '·未授权', en: '·not granted' },
+  'plugins-grant-more': { zh: '还有 {{count}} 项…', en: 'and {{count}} more…' },
+  'plugins-grant-hidden': {
+    zh: '共 {{count}} 项权限（此处未逐行显示）',
+    en: '{{count}} permission(s) not listed here',
+  },
+  'plugins-grant-unknown-line': {
+    zh: '宿主不认识、将跳过：{{names}}（共 {{count}} 项）',
+    en: 'Unknown to this host and skipped: {{names}} ({{count}} total)',
+  },
+  'plugins-install-key-grant': { zh: '⏎ 授予 {{count}} 项 · esc 跳过（安装保留）', en: '⏎ grant {{count}} · esc skip (install stays)' },
   'plugins-install-builds-title': { zh: '以下构建脚本需要批准（写进 profile 的 allowBuilds）：', en: 'These build scripts need approval (written to the profile allowBuilds):' },
   'plugins-install-incompatible-title': { zh: '版本不兼容的包：', en: 'Incompatible packages:' },
   'plugins-install-exemptions-title': { zh: '已登记的精确版本豁免：', en: 'Exact-version exemptions recorded:' },
   'plugins-install-key-confirm': { zh: '⏎ 安装 · esc 取消', en: '⏎ install · esc cancel' },
+  'plugins-install-key-confirm-grant': { zh: '⏎ 安装并授权 {{count}} 项 · esc 取消', en: '⏎ install and grant {{count}} · esc cancel' },
   'plugins-install-key-builds': { zh: '⏎ 允许这些脚本并重试 · esc 取消', en: '⏎ allow these scripts and retry · esc cancel' },
   'plugins-install-key-incompatible': { zh: '⏎ 接受风险并重试 · esc 取消', en: '⏎ accept the risk and retry · esc cancel' },
   'plugins-install-key-cancel': { zh: 'esc 取消安装', en: 'esc cancel the install' },
@@ -1640,6 +1694,10 @@ const dict = {
   'plugins-manage-enabled': { zh: '已启用 {{target}}：{{state}}', en: 'Enabled {{target}}: {{state}}' },
   'plugins-manage-disabled': { zh: '已关闭 {{target}}：{{state}}', en: 'Disabled {{target}}: {{state}}' },
   'plugins-manage-failed': { zh: '操作失败：{{reason}}', en: 'The action failed: {{reason}}' },
+  'plugins-manage-enable-persisted': {
+    zh: 'profile 已记录这次启用，但运行中的宿主拒绝了重载：授权已保留，重启后生效。',
+    en: 'The profile recorded this enable, but the running host refused the reload: the grant is kept and takes effect after a restart.',
+  },
   'plugins-manage-incompatible': {
     zh: '版本不兼容：{{packages}}——要强行启用，先接受风险：dsh plugin --profile {{profile}} allow-version <包@版本> <当前版本> --accept-risk',
     en: 'Incompatible version: {{packages}} — to force it, accept the risk first: dsh plugin --profile {{profile}} allow-version <package@version> <running version> --accept-risk',
@@ -1656,13 +1714,41 @@ const dict = {
     zh: '用户数据仍在：{{paths}} —— 不再需要时可手动删除。',
     en: 'Your own data is still there: {{paths}} — delete it by hand when you no longer need it.',
   },
-  'plugins-manage-residue-footprint': {
-    zh: '{{id}} 仍在授权文件 / 效果台账 / 存储目录里留有足迹',
-    en: '{{id}} still has a footprint in the grants file, the effect ledger or the storage directory',
+  'plugins-manage-residue-ledger': {
+    zh: '效果台账仍有 {{id}} 的记录（审计保留）：{{file}}',
+    en: 'The effect ledger still records {{id}} (kept for audit): {{file}}',
+  },
+  'plugins-manage-residue-storage': {
+    zh: '存储目录里仍有 {{id}} 的命名空间（用户数据保留）：{{file}}',
+    en: 'A storage namespace for {{id}} is still on disk (your data is kept): {{file}}',
   },
   'plugins-manage-residue-unjudged': {
     zh: '读不到 {{target}} 的包内声明，无法判断它是否留下了用户数据（不猜）。',
     en: 'The declaration inside {{target}} could not be read, so what data it left behind cannot be judged (nothing is guessed).',
+  },
+  'plugins-manage-grant-granted': { zh: '已按声明授予 {{count}} 项权限（{{id}}）', en: 'Granted {{count}} declared permission(s) ({{id}})' },
+  'plugins-manage-grant-forgotten': { zh: '已删除该组件的授权与 deny 条目（{{id}}）', en: 'Removed this component\'s grant and deny entries ({{id}})' },
+  'plugins-manage-grant-forget-failed': {
+    zh: '⚠ 该组件的授权条目未能删除（{{reason}}）：{{id}} · {{file}} —— 复用同一 id 的包可能继承这组授权，请到 /plugin 的授权矩阵手工清理。',
+    en: '⚠ This component\'s grant entries could not be removed ({{reason}}): {{id}} · {{file}} — a package reusing the same id may inherit them; clear them by hand from the /plugin grant matrix.',
+  },
+  'plugins-manage-grant-unhandled': {
+    zh: '读不到 {{target}} 的包内声明，或它不是本 profile 能接受的声明：无法确定组件 id，授权条目未处理（不猜）。',
+    en: 'The declaration inside {{target}} could not be read, or is not one this profile accepts: its component id was not used, and grant entries were left alone (nothing is guessed).',
+  },
+  'plugins-manage-grant-revoked': { zh: '已撤销 {{count}} 项授权（{{id}}）', en: 'Revoked {{count}} permission grant(s) ({{id}})' },
+  'plugins-manage-grant-revoke-failed': {
+    zh: '已关闭，但授权条目未能撤销（{{reason}}）：{{id}} · {{file}} —— 见 /plugin 的授权矩阵。',
+    en: 'Disabled, but the grant entries could not be revoked ({{reason}}): {{id}} · {{file}} — see the /plugin grant matrix.',
+  },
+  'plugins-manage-key-enable-grant': { zh: '⏎ 启用并授权 {{count}} 项 · esc 返回', en: '⏎ enable and grant {{count}} · esc back' },
+  'plugins-manage-key-disable-revoke': {
+    zh: '⏎ 关闭并撤销 {{count}} 项授权 · esc 返回',
+    en: '⏎ disable and revoke {{count}} grant(s) · esc back',
+  },
+  'plugins-manage-remove-grant-facts': {
+    zh: '该组件的授权与 deny 条目会被删除（不可恢复）；重新安装后需要再授权一次。',
+    en: 'This component\'s grant and deny entries are deleted (not recoverable); a reinstall asks for them again.',
   },
   'plugins-manage-usage': { zh: '用法：/plugin {{sub}} <bundle 名 | 行 id>', en: 'Usage: /plugin {{sub}} <bundle name | row id>' },
   'plugins-manage-pane-title': { zh: '插件生命周期', en: 'Plugin lifecycle' },
@@ -1676,8 +1762,8 @@ const dict = {
     en: 'This is destructive: it changes the profile\'s package.json and lockfile (rolled back if the service fails) and drops its {{rows}} rows / {{overrides}} overrides. Your own data is not deleted (any residue is reported separately).',
   },
   'plugins-manage-trust-facts': {
-    zh: '无法验证已装代码的安装来源：启用后它就在本进程内运行、不自动更新、没有沙箱。它声明的权限见 /plugin 的授权矩阵。',
-    en: 'The installed code\'s source cannot be verified: once enabled it runs inside this process, with no auto-update and no sandbox. Its declared permissions are in the /plugin grant matrix.',
+    zh: '无法验证已装代码的来源：启用后它在本进程内运行、无沙箱。本页列出的权限就是要授予的内容；授权是行为约束，不是安全隔离。',
+    en: 'The installed code\'s source cannot be verified: it runs in-process with no sandbox. What this pane lists is what Enter grants; grants are behavioural constraints, not a security boundary.',
   },
   'plugins-manage-host-row-facts': {
     zh: '这一行属于宿主层（dsh-base）：关掉它会卸载本应用注入的服务，本应用可能重启或退出。',

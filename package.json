@@ -163,6 +163,8 @@
     "verify:web-coexistence": "node scripts/verify-web-coexistence.mjs",
     "verify:plugin-spec": "node --import tsx/esm scripts/verify-plugin-spec.ts",
     "verify:plugin-grants": "node --import tsx/esm scripts/verify-plugin-grants.ts",
+    "verify:plugin-grant-write": "node --import tsx/esm scripts/verify-plugin-grant-write.ts",
+    "verify:plugin-grant-lifecycle": "node --import tsx/esm scripts/verify-plugin-grant-lifecycle.ts",
     "verify:plugin-storage": "node --import tsx/esm scripts/verify-plugin-storage.ts",
     "verify:plugin-messages": "node --import tsx/esm scripts/verify-plugin-messages.ts",
     "verify:packaged-presets": "node scripts/verify-packaged-presets.mjs",

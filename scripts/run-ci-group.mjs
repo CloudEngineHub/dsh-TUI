@@ -583,6 +583,11 @@ const GROUPS = {
 // `ctx.pluginManager` 缺席或失败时诊断照旧并给出原因。另有切会话栅栏：`/plugin` 与
 // `/agents` 的报告迟到时不得落进新会话。插件服务是夹具，不跑包管理器。
     ["verify-plugin-manager-chat", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-manager-chat.tsx']],
+// 授权生命周期（P1–P4）：写入器语义（ensure/revoke/forget、损坏拒写、原子写、undo）
+// 与真流程的顺序（先授后装、enable 先授、disable 后撤、remove 写前捕获 + 后 forget）、
+// 同 id 继承回归、面板清单渲染。两条都不挂 Cordis、不跑包管理器，授权文件只落临时目录。
+    ["verify-plugin-grant-write", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-grant-write.ts']],
+    ["verify-plugin-grant-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-grant-lifecycle.ts']],
 // `/plugin info <name>` 的补全行（review R3/R4）：描述是插件自己的元数据，组合后先净化再按
 // 显示单元限宽——标题里的换行不得越出弹窗行、ANSI 不得进缓存、超宽中文标题在缓存里就有界——
 // 且一次 warm 装入所有 shipped 语言：`/lang` 后同一个已 warm 的节点按渲染时的语言取标题，
@@ -719,6 +724,9 @@ const GROUPS = {
 // 文件补全回归（issue #278）：CMake 构建目录与任意大型兄弟目录不得
 // 独占 100 条全局预算，普通深层源码也不能被固定深度静默截断。
     ["verify-file-completion", ['node', 'scripts/verify-file-completion.mjs']],
+// `~/` 补全与附加回归（issue #1706）：任意深度按 home 展开、`~\` 等价、cwd 里有
+// 字面 `~` 目录时 `~/` 仍指 home、模型侧拿到展开后的绝对路径。
+    ["verify-tilde-home-completion-e2e", ['node', '--import', 'tsx/esm', 'scripts/verify-tilde-home-completion-e2e.mjs']],
 // /resume 会话管理回归（issue #112）：picker 重命名追加帧（seq 连续、
 // 已有字节不动、last-title-wins）、删除目录、路径穿越 id 拒绝。
     ["verify-resume-manage", ['node', 'scripts/verify-resume-manage.mjs']],
