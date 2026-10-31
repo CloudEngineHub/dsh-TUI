@@ -331,10 +331,22 @@ While the model is working, three paths have different placement:
     with the draft right away.
   - When a turn ends normally, queued messages still flow into the next turn;
     `Ctrl+C` keeps the queue.
-  - Only messages the backend confirmed as withdrawn are held. With an older
+  - On `Esc`, only messages the backend confirmed as withdrawn are held. With an older
     Claude CLI that cannot withdraw them, or when the withdrawal request fails,
     the backend still runs them next turn; dsh-TUI stops holding them, says so,
     and never sends them twice.
+  - Messages the DSH kernel dropped without running them (the session ended
+    unexpectedly, or the kernel discarded them) are held as "not delivered";
+    Claude and Codex still report such losses as discarded, so those are not
+    held. Held messages are never re-sent by themselves and stay for the next
+    session; on DSH, a message submitted after the session ended is held the
+    same way. While the session
+    is ended `⏎` sends nothing: `/new` starts a new session and `⏎` sends them
+    there, or `/restart` resumes this one (only text survives a restart).
+    Images attached to a held message stay with it into the next session. A held
+    message taken back with `↑` while the session is ended is an ordinary draft
+    again, and a draft's images do not survive `/new`: to keep the images,
+    run `/new` first and edit there.
 
 ## Session workflows
 
@@ -482,7 +494,7 @@ Notes:
   and never reaches the main context or token counts (closing the panel discards it).
 - **Never interrupts the running turn**: it can be triggered while the model is streaming; the main task keeps going.
 - Inside the panel: `↑`/`↓` scroll, `Space`/`Enter`/`Esc` dismiss, `c` copies the answer; `Esc` cancels while the answer is still pending.
-- The sidebar panel (when the panel column is open) has two layers: the default **reading layer** — `←`/`→` switch panels, `↑`/`↓` move the **selection** between turns, `PgUp`/`PgDn` page, `n` starts a new topic, `s` sends the **selected** turn's answer to the main composer (press `s` again to take it back), `c` copies the selected turn's answer; `Enter`/`Tab` (or a click on the input) enters the **editing layer** (`Esc` leaves one layer at a time: editing first, draft kept), where `←`/`→` move the caret first and, once the caret sits at the start/end, the same key falls through and switches panels again, while `↑` goes straight back up to the titles.
+- The sidebar panel (when the panel column is open) has two layers: the default **reading layer** — `←`/`→` switch panels, `↑`/`↓` move the **selection** between turns, `PgUp`/`PgDn` page, `n` starts a new topic, `s` sends the **selected** turn's answer to the main composer (press `s` again to take it back), `c` copies the selected turn's answer; `Enter`/`Tab` (or a click on the input) enters the **editing layer** (`Esc` leaves one layer at a time: editing first, draft kept), where `←`/`→` move the caret first and, once the caret sits at the start/end, the same key falls through and switches panels again, while `↑` goes straight back up to the titles. In the editing layer `Ctrl+V`/`Alt+V` pastes clipboard text at the caret (terminal-native paste works too, flattened to one line), and it always lands in the btw composer — with the column focused, paste **never** writes into the main draft below. A clipboard holding an image or files is refused with "not pastable as text".
 - The sidebar's bottom hint line **follows the layer** (the panel advertises it, the host only stitches it): with the cursor in the **list** it says `↑/↓ select · s to chat · c copy` (or `s unsend` for the attached turn); with the cursor in the **input** it drops s/c (there `s` is just a letter) and says `↑ select` instead. An empty thread advertises nothing there. The input box keeps only an `Enter to ask` placeholder.
 - The selection shows itself in exactly two ways: the title's **text** is inverted (not the whole row) and the terminal cursor parks on that row — so `↑`/`↓` visibly walks the native caret between titles. Both are hidden while the cursor sits in the main input or the side composer: they mean "the list owns the keyboard". **Clicking a title row** moves the selection there too.
 - Scrolling only happens when it must: a target title already inside the viewport scrolls nothing at all; one outside it scrolls just far enough to **exactly reveal** that row (flush to the top edge when walking up, flush to the bottom edge when walking down).
