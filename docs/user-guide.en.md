@@ -37,12 +37,26 @@ dsh-tui
 ### 1.2 What you see on first launch
 
 1. **First-run guide** (whenever the guide has not been completed yet — a fresh install, or a
-   guide that bumped its own version): a four-step wizard — **API key & connectivity → language &
-   theme → model & workspace → shortcuts & moves**. `←/→` change step, `Tab` switches between the
-   two panes, `↑/↓` move the selection, `Enter` runs the step, `Esc` skips. **Skipping is not
-   recorded** (you are asked again next launch); the last step only counts as finished — and writes
-   the marker — when `Enter` lands on a **shortcut card** (on a command card `Enter` tries the command).
-   Re-run it any time with `/setup`.
+   guide that bumped its own version): a four-step wizard — **accounts & models → language &
+   theme → model & workspace → shortcuts & moves**. The first step is no longer a check page: it
+   offers **actions** — `Sign in to a subscription (OAuth)` (ChatGPT / Claude / Grok, or DeepSeek
+   account browser sign-in, each annotated with its masked sign-in state), `Add a model provider
+   (API key)` (the same wizard as `/provider`: a built-in catalog or a custom endpoint), `Check
+   again`, `Skip this step`. After a subscription sign-in, the **newly available models are caught**:
+   none → just a report; exactly one → it becomes the default; several → an inline default picker:
+   all of them are usable once you are signed in, so it only picks the default (`↑`/`↓` move, `Enter`
+   sets the default; the last row "Keep the current model", or `Esc`, leaves it alone). With a
+   signed-in subscription or a keyed route, step 1 no longer reports a missing `DEEPSEEK_API_KEY` as a
+   failure — only the DeepSeek official API's balance check is skipped. Adding a provider leaves which models to enable and which of
+   them to switch to (or keeping the current model) to the `/provider` wizard itself; back in the guide
+   it only reports the result, without
+   asking again or changing the default the wizard settled. When no in-app seam exists (an older host, a bare `cordis.yml`) the fallback names the
+   **real** manual paths — the `refs:` block of `$DSH_HOME/.credentials.yaml` and PowerShell's
+   user-level variable / cmd's `setx` — instead of a config file nothing reads.
+   `←/→` change step, `Tab` switches between the two panes, `↑/↓` move the selection, `Enter` runs
+   the step, `Esc` skips. **Skipping is not recorded** (you are asked again next launch); the last
+   step only counts as finished — and writes the marker — when `Enter` lands on a **shortcut card**
+   (on a command card `Enter` tries the command). Re-run it any time with `/setup`.
 2. **Launchpad** (the first screen of an **ordinary launch** — no `--resume`, no workspace target,
    no prompt; turn it off in `/settings` (`launchpad`, on by default, restart to apply), or
    `DSH_TUI_NO_LAUNCHPAD=1` skips it entirely): the pixel-whale header (`✦ dsh-TUI`
@@ -376,7 +390,7 @@ The command menu = built-in commands (aliases included) + DSH registry commands 
 | `/team` | `status` (default) | experimental Agent Teams status; appears in Help and `/` completion only while the team service runs, reporting the bundle, the service and this session's teammates. Switch with `/plugin enable\|disable @deepseek-ai/dsh-experimental-agent-team-profile` (a typed `/team` while the service is absent gives the enable route) |
 | `/jobs` | none | background-task panel: status/runtime/exit-code tracking, `↑/↓` select, `k` stop; while open, `Esc` **closes only the panel** and won't interrupt the turn (close the panel first, then `Ctrl+C`) |
 | `/settings` | none | open the plugin settings editor (namespace read/edit) |
-| `/setup` | none | re-run the first-run guide (API key / language+theme / model+workspace / shortcuts) — same screen as the very first launch |
+| `/setup` | none | re-run the first-run guide (accounts & models / language+theme / model+workspace / shortcuts) — same screen as the very first launch |
 | `/help` | none | shortcut + command help menu (`?` entry) |
 
 ### 3.3 Model / display
@@ -646,7 +660,7 @@ Common items below, full list on the /settings screen. Most topics (**Appearance
 | jobGroupFold | consecutive background-job cards: auto (default — runs of 2+ group, a settled run of 3+ folds into its summary line) / always (any run of 2+ folds right away, live jobs included) / never (never folds on its own, every card stays). The group header summarizes status and total time; click it or press Ctrl+O to expand |
 | effortDefault | default reasoning effort: Auto plus the current backend/model’s declared tiers (including custom IDs). Saved unsupported values remain readable; only Auto is selectable while loading or unavailable |
 | smoothStreaming | smooth streaming output (default on): replies/thinking/tool-card text reveal at ~30fps; replay/history always direct |
-| toolBackground | tool-card background emphasis: none / subtle / strong |
+| toolBackground | tool-card background emphasis: none / subtle / strong; also applies when expanded |
 | turnUsageRow | Turn-usage row (default off): show a per-turn summary of tokens, cache, duration and retries; `/tokens`, `/status` and the footer token hover are unaffected |
 | mermaidDiagrams | Mermaid diagrams (default on): ```` ```mermaid ```` blocks render as character diagrams, forming while streaming; too-wide or unsupported types keep source with the required columns. Applies immediately |
 | mathRendering | LaTeX math (default `auto`; lives on the **Formula** subpage of `/settings`): how `$…$` / `\(…\)` inline and `$$…$$` / `\[…\]` / bare display-environment (`\begin{align}` …) block formulas in replies show. `auto` uses the best available renderer (today Unicode text, with fractions and limits stacked in blocks), `image` typesets formulas with MathJax as terminal images when the terminal has graphics — the Kitty graphics protocol (Kitty, Ghostty, WezTerm, iTerm2…) or Sixel (Windows Terminal 1.22+, xterm, foot, WezTerm) — in the theme's text color (block formulas up to 16 rows; inline formulas as one-row images when a single row can hold them legibly; still-streaming formulas, dimmed thinking, terminals without graphics, formulas too small on one row, and any render failure fall back to Unicode), `unicode` pins Unicode text, `source` keeps the TeX. Unsupported, still-streaming, or too-wide formulas keep their source (a too-wide block first falls back to one line). Prices (`$5`), shell variables (`$HOME`), and `$` in code are left alone. The older `latexMath: false` still means `source`. **Click a formula image** to open the preview card: it re-typesets at twice the cell size, zooms 100–800%, pans, closes on `Esc` or a click outside, and titles itself with the formula's TeX. On Sixel the formulas carry **no backing** (only their strokes), so the terminal background or wallpaper shows through. Illustrations that ship with their own transparent margins — the `whaleGirl` raster — float the same way; photographs, screenshots, and images inside cards still composite onto a colour, because Sixel cannot express soft alpha. Applies immediately |
