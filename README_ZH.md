@@ -312,7 +312,10 @@ ralph）保留 `subagent`。teammate 显示为子代理行，
 agent 消息），其余团队工具显示为单行卡片（`send_message` 带目标与 `sent`）。agents 仪表盘（Ctrl+A）与 agents 侧栏
 进入团队视图：teammate 以成员名显示，状态为运行中 / 空闲 / 准备中 / 失败（回合结束的
 teammate 是空闲而不是完成，发消息即可唤醒）；另有 Lead 行、其余子代理、只读任务板
-（状态、负责人、阻塞、写入范围警告），团队记录被拒时显示错误横幅。
+（状态、负责人、阻塞、写入范围警告），团队记录被拒时显示错误横幅。某个
+delegation provider 的已结算运行失败至少 2 次、且不低于一半时，列表上方多一行
+通道降级提示；内建 `subagent`、workflow 成员与 Claude 的按类型子代理不计，
+它们没有可切换的 provider。
 
 限制：开关作用于整个 profile，不能按会话开关（没有 profile 插件服务或没有热重载的
 启动要用 `dsh plugin` 并重启）；还不能「进入 teammate 会话」；`/export` 不导出团队消息。上游限制同样
@@ -344,6 +347,8 @@ teammate 是空闲而不是完成，发消息即可唤醒）；另有 Lead 行�
 DSH 因会话被释放而结束回合时，转录显示“会话已停止”；用户主动中断仍保留询问下一步的提示。这仅呈现上游报告的停止原因，不恢复卡住的会话或其排队输入。
 
 Windows 下由 `NVIM` 或 `VIM_TERMINAL` 标识的 Neovim/Vim 终端保留 VT 输入，不启用 ConPTY 模式 9001。其他不兼容的嵌入宿主可在启动前设置 `DSH_TUI_DISABLE_WIN32_INPUT_MODE=1`（PowerShell：`$env:DSH_TUI_DISABLE_WIN32_INPUT_MODE="1"`）。启动与恢复使用同一判定；原生 Windows Terminal、conhost 与 VS Code 未禁用时保持现有模式。禁用可能失去带修饰键的 Enter 编码。
+
+扩展键上报（Kitty 键盘协议与 xterm `modifyOtherKeys`）只对固定名单开启：iTerm2、kitty、WezTerm、Ghostty、rio、Orca、tmux、Warp 与 Windows Terminal。名单外的终端可设置 `DSH_TUI_FORCE_EXTENDED_KEYS=1` 自行开启；SSH 或嵌套 xterm.js 宿主可用 `DSH_TUI_DISABLE_EXTENDED_KEYS=1` 对白名单内的终端关掉，两者同时设置时以关闭为准。原生 Windows 由 win32-input-mode 上报 Enter 的修饰键、不受本项影响；其余平台上，未开启扩展键上报时终端无法区分 `Shift+Enter` 与 `Enter`，换行要用 `Ctrl+J`。
 
 
 原生 Windows 下，分片的 Win32 输入记录会跨短暂输入延迟重组，不再作为数字协议串进入输入框。平台检测只能说明这台机器可能运行该私有模式（win32-input-mode）：裸 `ESC[` 分片只有在真正解码到一条记录之后才会被扣住，而自身形状已足够像一条记录的分片可自行挂起（这也是首条记录即使被切分仍可能恢复的原因）。从不进入该模式的 Windows 终端（mintty、GitBash 等）因此保持经典 VT 路径：单独 `Esc` 保持既有响应时间，`ESC[` 超时释放后紧随输入的字母也不会被吞掉。
@@ -412,6 +417,10 @@ DSH 的 `/fork` 保持当前会话不变并创建可恢复副本；有历史的�
 「仅历史」目录只提供编辑和新建会话操作；重命名与移除仅适用于已登记工作区。
 
 `/resume` 在切换前失败或取消时，会归还本次尝试新取得的会话占用，便于重新尝试恢复。
+
+Linux 下，旧 PID 被非主线程复用时，可回收残留的 TUI 会话占用与挂载锁。
+这要求 `/proc` 的身份信息可读且与当前 PID 命名空间一致；身份无法确认时仍保留占用。
+旧 PID 被另一个进程复用时仍可能保留残留记录，因此这不代表已解决跨平台的全部 PID 复用问题。
 
 **后台任务**：点击卡片头部可直达该任务详情。点击卡片正文或按 `Ctrl+O`，切换命令首句预览与完整脚本；命令和输出分别使用不同色边，节首标记为 `❯`（Windows 用 `>`）和 `≡`。输出固定显示最新两个可视行。`/jobs` 与侧栏任务面板保留全量输出滚动，按 `e` 切换焦点命令的折/展；脚本连续空行压缩为一行。
 

@@ -386,7 +386,11 @@ panel switch to a team view: each teammate under its member name with
 `running` / `idle` / `provisioning` / `failed` (a teammate whose turn ended
 is idle — a message wakes it — not done), the Lead line, the remaining
 subagents, a read-only task board (status, owner, `blocked`, write-scope
-warnings) and a banner when the team record was rejected.
+warnings) and a banner when the team record was rejected. A delegation
+provider whose settled runs fail at least twice and at least half the time
+gets one degraded-channel line above the list; the built-in `subagent` route,
+workflow members and per-type Claude children are excluded because there is
+no provider to switch to.
 
 Limits: the switch covers the whole profile, not one session (a launch
 without the profile plugin service, or without hot reload, needs `dsh plugin`
@@ -420,6 +424,8 @@ While the model is working: `Enter` steers, `Tab` queues a follow-up, `Ctrl+Ente
 When DSH ends a turn because its session was disposed, the transcript shows “Session stopped”; user interruption keeps its existing prompt for what to do next. This describes the reported stop reason and does not recover a stuck session or its queued inputs.
 
 Windows Neovim/Vim terminals identified by `NVIM` or `VIM_TERMINAL` retain VT input instead of enabling ConPTY mode 9001. For another incompatible embedded host, set `DSH_TUI_DISABLE_WIN32_INPUT_MODE=1` before launch (PowerShell: `$env:DSH_TUI_DISABLE_WIN32_INPUT_MODE="1"`). The same gate applies at startup and after resume. Native Windows Terminal, conhost and VS Code keep their existing mode unless disabled; the opt-out can remove modified-Enter reporting.
+
+Extended key reporting (Kitty keyboard protocol and xterm `modifyOtherKeys`) is enabled for a fixed terminal list: iTerm2, kitty, WezTerm, Ghostty, rio, Orca, tmux, Warp and Windows Terminal. A terminal missing from that list can opt in with `DSH_TUI_FORCE_EXTENDED_KEYS=1`, and `DSH_TUI_DISABLE_EXTENDED_KEYS=1` opts an allowlisted terminal back out for SSH or nested xterm.js hosts (it wins when both are set). Outside native Windows, where win32-input-mode reports Enter's modifiers instead and is not touched by this switch, a terminal without extended keys cannot tell `Shift+Enter` from `Enter`, and `Ctrl+J` is the newline fallback.
 
 
 On native Windows, fragmented Win32 input records are reassembled across short input delays instead of appearing as numeric protocol text. The platform check only reports that this machine might run the private mode (win32-input-mode); a bare `ESC[` fragment is held only after one record has actually been decoded, while a fragment whose own shape is already record-specific holds on its own (which is how even the first record can survive a split). Windows terminals that never enter the mode (mintty, GitBash) therefore keep the classic VT path: a lone `Esc` keeps its normal response time, and a letter typed after a timed-out `ESC[` is not swallowed.
@@ -489,6 +495,12 @@ Removing a workspace registration keeps its sessions accessible under a "History
 History-only directories offer edit and new-session actions; rename and remove are available for registered workspaces.
 
 If a `/resume` attempt fails or is cancelled before switching, it releases any session occupancy acquired by that attempt so the session can be retried.
+
+On Linux, stale TUI occupancy and mount locks can be reclaimed when the old PID
+has been reused by a non-leader thread. This requires readable `/proc` identity
+data in the same PID namespace; uncertain identities remain occupied. Reuse by
+another process can still retain a stale claim, so this is not a general fix for
+PID reuse across platforms.
 
 **Background jobs**: card headers open the focused task panel. Click the card body or use `Ctrl+O` to toggle the command between its first statement and full script. Commands and output use separate colored edges with `❯` (`>` on Windows) and `≡` on their first rows; output always stays at the latest two visible rows. `/jobs` and the side panel keep the full output scrollable, while `e` toggles the focused command. Consecutive blank script lines collapse to one.
 

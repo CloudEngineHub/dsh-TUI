@@ -470,6 +470,7 @@ const dict = {
 
   // ── utils/loaded-context.ts ─────────────────────────────────────────
   'command-output-truncated': { zh: '…（命令输出已截断：最多 200 行、65536 个 UTF-16 码元、每行 4000 显示单元）', en: '… (command output truncated: 200 lines, 65536 UTF-16 code units, 4000 cells per line)' },
+  'command-output-title': { zh: '命令输出', en: 'Command output' },
   'context-truncated': { zh: '…（已截断）', en: '… (truncated)' },
   'context-sections': { zh: '系统提示词 {{n}} 段', en: 'System prompt {{n}} sections' },
   'context-files': { zh: '工作区指令 ×{{n}}', en: 'Workspace instructions ×{{n}}' },
@@ -1908,6 +1909,7 @@ const dict = {
   'subagent-started': { zh: '开始时间', en: 'Started' },
   'subagent-completed': { zh: '完成时间', en: 'Completed' },
   'subagent-error-label': { zh: '错误', en: 'Error' },
+  'subagent-channel-degraded': { zh: '通道 {{provider}}：结算 {{settled}} 次、失败 {{failed}} 次——可改用其他 delegation provider', en: 'channel {{provider}}: {{failed}} of {{settled}} settled runs failed — try another delegation provider' },
   'subagent-output-label': { zh: '输出', en: 'Output' },
   'subagent-no-output': { zh: '暂无输出', en: 'No output yet' },
   'subagent-dashboard-title': { zh: ' 子代理面板 ', en: ' Subagent Dashboard ' },
