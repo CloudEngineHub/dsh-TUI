@@ -129,7 +129,7 @@ The `deepseek-official` API-key route needs `DEEPSEEK_API_KEY`. On DSH
 and select the separate account route through `/model`. Other supported
 accounts can sign in through `/provider` or `/auth` after startup.
 
-The primary compatibility target is DSH `0.2.1-rc.5`. This adapter supports its
+The primary compatibility target is DSH `0.2.2-rc.1`. This adapter supports its
 Shell API, V4 session messages, declarative presets, and profile-backed settings;
 older supported hosts retain their compatibility paths. See [configuration](docs/configuration.en.md).
 
@@ -175,10 +175,16 @@ Afterwards `dsh-tui` and `dsh --profile dsh-tui` are equivalent.
 > [Getting started](docs/getting-started.en.md#pnpm-install-script-blocks-and-foreign-platform-natives).
 
 After startup the TUI checks for newer versions in the background. It never
-blocks the first frame. Type `/update` for a one-shot upgrade. It restarts
-automatically and resumes the current session. Launcher alignment only touches
-proven global installs; local npm/npx packages, ambiguous aliases and multi-member
-pnpm groups stay unchanged. See
+blocks the first frame. Type `/update` for a one-shot upgrade of the whole set
+— TUI, dsh engine and global launcher. It restarts automatically and resumes
+the current session, and refuses instead of leaving an incompatible or
+unbootable TUI/engine combination. Launcher alignment is normally best effort,
+but a failure after the engine advances blocks the restart and prints a repair
+command. If the registry has a newer dsh release outside the TUI's
+validated line, it says so and waits for a TUI update rather than installing an
+unvalidated engine. Launcher alignment only touches proven global installs;
+local npm/npx packages, ambiguous aliases and multi-member pnpm groups stay
+unchanged. See
 [Getting started](docs/getting-started.en.md) for the profile lifecycle,
 source builds, and troubleshooting, including migration from the former
 `dsh-cc-tui` package.
@@ -195,7 +201,7 @@ and Node/Python/PowerShell integration examples.
 | Command | Purpose |
 | --- | --- |
 | `dsh-tui` / `dst` | Start the TUI; `dst` is a short alias for the same program |
-| `dsh-tui --resume [id]` · `dsh-tui update` · `dsh-tui doctor` | Resume a session · update the profile and align the launcher · pre-flight environment checks |
+| `dsh-tui --resume [id]` · `dsh-tui update` · `dsh-tui doctor` | Resume a session · align the TUI, dsh engine and global launcher as one set · pre-flight environment checks |
 | `dsh-tui safe` | Read-only diagnostics, plugin inventory and repair guidance; `safe --rescue` builds a clean rescue profile |
 | `dsh-tui version` · `dsh-tui help` | Launcher and profile versions and usage; both work even without a `dsh` install |
 
@@ -368,8 +374,8 @@ team record stays in the session and comes back when the bundle is enabled
 again.
 
 If the running DSH does not ship the bundle (`/plugin list` stays silent),
-switch DSH to one of the supported lines first (`0.2.1-rc.5`, `0.2.1-rc.4`, `0.2.1-rc.3`, `0.2.1-rc.2`, `0.2.1-alpha.5`,
-`0.2.0-rc.1` or `0.2.0-rc.2`). To install it into the profile explicitly,
+switch DSH to one of the supported lines first (`0.2.2-rc.1`, `0.2.1-rc.5`, `0.2.1-rc.4`, `0.2.1-rc.3`,
+`0.2.1-rc.2`, `0.2.1-alpha.5`, `0.2.0-rc.1` or `0.2.0-rc.2`). To install it into the profile explicitly,
 run `dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@<your-dsh-version>`:
 the team packages ship in lockstep with DSH and pin their DSH peers exactly,
 so the version must match.
@@ -415,7 +421,7 @@ In the launchpad input, `Shift+Enter` (or `Option+Enter`) opens chat and inserts
 
 In both the launchpad and chat, `Alt/Option+←/→` moves by whitespace-delimited words and `Alt/Option+Backspace` deletes the previous word, like `Ctrl+W`. On macOS, configure your terminal to send Option as Meta.
 
-Use `Alt+Up` / `Alt+Down` to page through question text and details, or approval previews on very short terminals, without moving the choice focus; these keys are remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the preview. Complete OAuth links remain readable when browser and clipboard helpers are unavailable.
+Use `Alt+Up` / `Alt+Down` to page through question text and details, or approval previews on very short terminals, without moving the choice focus; these keys are remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the preview. Complete OAuth links remain readable when browser and clipboard helpers are unavailable. Fixed-action permission questions offer only the caller's choices; ordinary questionnaires still accept free text.
 
 Text, cursor position and staged image attachments on the launchpad or in chat while the backend starts are preserved when the session becomes ready. Press `Enter` after it is ready to send; an earlier `Enter` preserves the draft without queuing it. Opening a new session while startup is pending clears the previous draft and its images.
 
@@ -534,7 +540,7 @@ Runtime path, module boundaries, performance notes and persistence locations: [A
 ## Known Limitations
 
 - Injected plugin context has no standalone display; it counts into the context segments.
-- `/model` changes the next request’s route in the same session; history and session ID are preserved. The last used route is recorded when the next request starts. DSH versions before `0.1.2-alpha.3` refuse switching and prompt an upgrade because their subagents inherit the original route.
+- `/model` changes the next request’s route in the same session; history and session ID are preserved. The last used route is recorded when the next request starts. On DSH 0.2.2, API/plugin selections also update the next-model readout; late events from a previously fixed step do not overwrite the selected model's capacity metadata. DSH versions before `0.1.2-alpha.3` refuse switching and prompt an upgrade because their subagents inherit the original route.
 - `Ctrl+V` needs platform clipboard tools; unsupported bitmap formats are rejected.
 - Windows Terminal/ConPTY sixel frames check the last transmitted raster’s cursor position before parking, using measured cell geometry and encoded band controls. Detected drift uses the same physical clear and redraw as `Ctrl+L`. Probes allow one pending reply (500 ms), skip resize/handoff, and pause for 60 seconds after an unanswered query or three repairs within 10 seconds. Set `DSH_TUI_SIXEL_CURSOR_HEAL=0` to disable; `DSH_TUI_DEBUG` records probe/recovery decisions. This bounded mitigation cannot detect every kind of pixel corruption or repair ConPTY itself.
 
@@ -748,7 +754,7 @@ after an intentional lockfile update, then review the cohort diff.
 
 ### Bounded update installation
 
-`/update` and `dsh-tui update` give each profile installer invocation a **30-minute
+`/update` and `dsh-tui update` give each installer invocation (profile and engine) a **30-minute
 wall-clock limit**. Set `DSH_TUI_UPDATE_TIMEOUT_MS` to a positive integer in
 milliseconds to change it (invalid values use the default). Output activity does
 not reset this deadline; a quiet but healthy installation can use the full limit.

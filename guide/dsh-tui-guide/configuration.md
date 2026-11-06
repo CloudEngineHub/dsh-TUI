@@ -368,6 +368,8 @@ Profile 模式不再使用旧的 `DSH_TUI_COMPACT_RATIO`、`DSH_TUI_COMPACT_RETA
 | `DSH_TUI_BACKEND` | 会话后端（内置 `dsh` / `claude` / `codex`，或已装的插件后端），通常由 `dsh-tui --backend` 设置；未安装或写错的 id 按 `dsh` 启动并告警（若同时带了 `--resume` 请求则改为报错退出，见上） |
 | `DSH_TUI_HOST_ENTRY` | 设为 `0` 时两个内核都经 `dsh --profile` 启动（默认两个内核都从本包入口启动）。入口用不了已安装的 dsh（`PATH` 上的 `dsh` 不是 `@deepseek-ai/dsh`、启动脚本跟不进去、所需模块或导出缺失）时，DSH 启动自动回退到 `dsh --profile`，并在终端与界面里说明原因 |
 | `DSH_TUI_UPDATE_LAUNCHER` | 设为 `0` 时 `/update` 与 `dsh-tui update` 跳过全局启动器对齐（钉住启动器、或排查对齐失败时用）；默认开启 |
+| `DSH_TUI_UPDATE_ENGINE` | 设为 `0` 时 `/update` 与 `dsh-tui update` 跳过全局 dsh 引擎的自动安装与升级（钉住引擎时用）；若新 TUI 的 peer 范围不支持当前引擎，升级仍会被拒绝：当前引擎**低于**范围且安装可自动执行时附引擎升级命令（安装不可自动执行时给修复指引），**高于**范围时只提示等声明支持该引擎的 dsh-tui 发布（不降级、不打印安装命令） |
+| `DSH_TUI_DSH_PM` | `npm` 或 `pnpm`，覆盖 dsh 全局安装形态的判定（异常前缀、诊断时用）；无法识别的布局仍不会被猜着写入。pnpm 布局还要求能证明所属安装组只含 `dsh`，否则只给 `pnpm list -g --depth 0` 检查指引，不用单包命令替换整组 |
 | `DSH_TUI_CLAUDE_PERMISSION_MODE` | Claude 后端的起始权限模式（`default`/`acceptEdits`/`plan`/`dontAsk`/`bypassPermissions`），优先于 `/permission` 记住的选择 |
 | `DSH_TUI_WORKSPACE_TARGET` | 启动时解析的工作区路径或 URI，通常由 `dsh-tui <目标>` 设置 |
 | `DSH_TUI_SESSION_ROOT` | 覆盖 JSONL 会话根目录；profile 默认 `$DSH_HOME/sessions`，裸 `cordis.yml` 默认 `~/.dsh-tui/sessions` |
@@ -419,7 +421,7 @@ Profile 模式不再使用旧的 `DSH_TUI_COMPACT_RATIO`、`DSH_TUI_COMPACT_RETA
 `dsh-auth` 插件包**。`/provider` 的添加分支提供 ChatGPT/Codex（`openai-codex`）、
 Claude（`anthropic`）、Grok（`xai`）订阅账号登录。宿主 pi-ai catalog 提供相应流程
 时还可使用 OpenAI 直连 ChatGPT 登录（`openai`，使用 OpenAI API 而非旧版 Codex
-后端）和 Meta Muse（`meta`）。当前主验证线 DSH `0.2.1-rc.5` 的开发依赖解析到 pi-ai
+后端）和 Meta Muse（`meta`）。当前主验证线 DSH `0.2.2-rc.1` 的开发依赖解析到 pi-ai
 `1.2.0`，包含 Meta Muse 与 OpenAI 直连登录。`/auth status`、`/auth login [provider]`、
 `/auth logout <provider>` 对这些 pi-ai 路由操作同一套凭据。浏览器授权会尝试自动打开页面，并在同一
 问卷中提供授权链接与手动粘贴回调 URL/代码的输入；设备码流程在轮询期间显示可复制的

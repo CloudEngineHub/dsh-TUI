@@ -117,7 +117,7 @@ DSH 0.2.1 起，Agent 把会话切到别的目录（`working_directory` 工具�
 
 前置条件：安装 [Node.js](https://nodejs.org/zh-cn) 与 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。`deepseek-official` API key 路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 的标准 profile 也可用 `/auth login deepseek-account` 登录，再通过 `/model` 选择独立的账号路由。其他支持的账号可在启动后通过 `/provider` 或 `/auth` 登录。
 
-主适配目标为 DSH `0.2.1-rc.5`，已接入新版 Shell API、V4 会话消息、声明式预设与
+主适配目标为 DSH `0.2.2-rc.1`，已接入新版 Shell API、V4 会话消息、声明式预设与
 profile 设置；旧受支持版本保留兼容路径。迁移说明见[配置参考](docs/configuration.md)。
 
 DSH 0.2.1-rc.2 及之后还可在 `/settings` 选择 DeepSeek 搜索 / 抓取 API、修改端点与结果数。
@@ -149,7 +149,7 @@ dst
 
 > **新用户提示**：pnpm ≥11 默认拦截带安装脚本的依赖，报 `ERR_PNPM_IGNORED_BUILDS`。更新时还会忽略异平台原生包（`@img/sharp-*` 与 Claude SDK 的 `@anthropic-ai/claude-agent-sdk-*`），只取本机平台的二进制。`/update` 与 `dsh-tui update` 都会自动写好这两份配置，无需手工处理。更新**从不**顺手安装 Claude SDK：只有你在内核选择器里选中该后端时才会装，且只装当前平台对应的版本。细节见[安装与快速开始](docs/getting-started.md#pnpm-安装脚本拦截与异平台原生包)。
 
-TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 `/update` 一键升级，自动重启并恢复当前会话。启动器对齐只操作可证明的全局安装；项目内 npm/npx 包、归属有歧义的别名和 pnpm 多成员组均保持不变。profile 叠加机制、源码构建与常见问题见[安装与快速开始](docs/getting-started.md)。
+TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 `/update` 一键对齐整套（TUI、全局 dsh 引擎、全局启动器），自动重启并恢复当前会话；TUI 与引擎不兼容或引擎不可启动时明确拒绝；若 registry 上有超出本 TUI 验证范围的新 dsh，会说明在等 TUI 适配，不会安装未验证的引擎。启动器对齐通常是 best effort，但引擎已推进后若启动器对齐失败，会拒绝重启并打印修复命令；只操作可证明的全局安装；项目内 npm/npx 包、归属有歧义的别名和 pnpm 多成员组均保持不变。profile 叠加机制、源码构建与常见问题见[安装与快速开始](docs/getting-started.md)。
 
 ### CLI 子命令
 
@@ -162,7 +162,7 @@ Node/Python/PowerShell 示例见[自动化 CLI](docs/cli.md)。
 | 命令 | 作用 |
 | --- | --- |
 | `dsh-tui` / `dst` | 启动 TUI；短别名是同一个程序 |
-| `dsh-tui --resume [id]` · `dsh-tui update` · `dsh-tui doctor` | 恢复会话 · 更新 profile 并对齐启动器 · 环境体检 |
+| `dsh-tui --resume [id]` · `dsh-tui update` · `dsh-tui doctor` | 恢复会话 · 一次对齐 TUI、dsh 引擎与全局启动器 · 环境体检 |
 | `dsh-tui safe` | 只读诊断、插件清单与修复指引；`safe --rescue` 创建干净的救援 profile |
 | `dsh-tui version` · `dsh-tui help` | 启动器与 profile 版本、用法；没装 dsh 时这两条也能用 |
 
@@ -300,7 +300,7 @@ teammate。在 teammate 会话里看不到其他 teammate 的运行状态，确�
 计数。团队记录留在会话里，再次开启时恢复。
 
 如果运行中的 DSH 不自带这个包（`/plugin list` 不显示它），先把 DSH 换到支持团队包的
-版本线（`0.2.1-rc.5`、`0.2.1-rc.4`、`0.2.1-rc.3`、`0.2.1-rc.2`、`0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2`）；需要显式装进
+版本线（`0.2.2-rc.1`、`0.2.1-rc.5`、`0.2.1-rc.4`、`0.2.1-rc.3`、`0.2.1-rc.2`、`0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2`）；需要显式装进
 profile 时用 `dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@<你的 DSH 版本>`——团队包与 DSH
 同步发版、对 DSH 的 peer 是精确版本，版本必须完全一致。
 
@@ -336,7 +336,7 @@ delegation provider 的已结算运行失败至少 2 次、且不低于一半时
 
 启动页与聊天页均支持 `Alt/Option+←/→` 按空白分隔的单词移动，`Alt/Option+Backspace` 与 `Ctrl+W` 一样删除前一个单词。macOS 终端需将 Option 配置为 Meta。
 
-用 `Alt+Up` / `Alt+Down` 翻阅问卷正文与说明，或极矮终端中的审批预览，不移动选项焦点；可在 `/settings` → `Shortcuts` 改键。全屏还支持在预览区域使用滚轮。浏览器和剪贴板工具不可用时，仍可读到完整 OAuth 链接。
+用 `Alt+Up` / `Alt+Down` 翻阅问卷正文与说明，或极矮终端中的审批预览，不移动选项焦点；可在 `/settings` → `Shortcuts` 改键。全屏还支持在预览区域使用滚轮。浏览器和剪贴板工具不可用时，仍可读到完整 OAuth 链接。固定动作的权限问卷只提供调用方声明的选项，普通问卷仍可自由输入。
 
 后端启动期间，落地页或聊天页的文字、光标位置和已暂存的图片附件会保留到会话就绪。就绪后按 `Enter` 发送；提前按 `Enter` 会保留草稿，不自动排队发送。启动尚未完成时主动新建会话，会清除之前的草稿及其图片。
 
@@ -452,7 +452,7 @@ TUI 只负责交互与呈现：会话日志是唯一事实源，模型、工具�
 ## 已知限制
 
 - 注入的插件上下文没有独立展示，计入上下文分段。
-- `/model` 在同一会话内更换下一次请求的模型，保留历史与 session ID；实际使用的路由在下一次请求开始时记录。DSH 低于 `0.1.2-alpha.3` 时会拒绝切换并提示升级，因为旧版子代理仍继承创建时的路由。
+- `/model` 在同一会话内更换下一次请求的模型，保留历史与 session ID；实际使用的路由在下一次请求开始时记录。DSH 0.2.2 的 API／插件选择同样会更新下一模型的读数，已固定旧步骤的迟到事件不会覆盖所选模型的容量 metadata。DSH 低于 `0.1.2-alpha.3` 时会拒绝切换并提示升级，因为旧版子代理仍继承创建时的路由。
 - `Ctrl+V` 需要平台剪贴板工具；不支持的位图格式直接拒绝。
 - Windows Terminal/ConPTY 的 sixel 帧在停放光标前检查最后传输图像的光标，预期位置由实测单元格尺寸及编码带控制推导。发现漂移后复用 `Ctrl+L` 的物理清屏和重画。最多一个在途回复（500ms），resize/交接期间跳过；无回复或 10 秒内恢复三次后暂停 60 秒。设置 `DSH_TUI_SIXEL_CURSOR_HEAL=0` 可关闭；`DSH_TUI_DEBUG` 记录探测及恢复决策。此有界缓解不能检测所有像素污染，也不是对 ConPTY 本身的修复。
 
@@ -637,7 +637,7 @@ WAL，不手工复制活动数据库与 WAL。缺少此 API 的构建会明确�
 
 ### 更新安装的有界等待
 
-`/update` 与 `dsh-tui update` 的每次 profile 安装调用默认有 **30 分钟实际时间上限**。
+`/update` 与 `dsh-tui update` 的每次安装调用（profile 与引擎）默认有 **30 分钟实际时间上限**。
 可用正整数毫秒数 `DSH_TUI_UPDATE_TIMEOUT_MS` 调整；无效值使用默认值。
 输出不会重置上限，正常静默安装可使用全部时限；只有进程最终退出码表示成功，
 打印 `Done` 不代表成功。Ctrl+C 取消本次拥有的安装进程。
