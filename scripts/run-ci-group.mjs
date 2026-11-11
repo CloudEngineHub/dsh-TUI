@@ -278,6 +278,10 @@ const GROUPS = {
 // 高度差公式会少算 1 行 → 上移在视口顶被钳制 → 整帧相对写入链低一行
 // （verify-trace-scene settle-gap flake 的确定性蒸馏，红绿验证过）。
     ["verify-shrink-anchored-pad", ['node', '--import', 'tsx/esm', 'scripts/verify-shrink-anchored-pad.tsx']],
+// 收缩到「装得下视口」时帧必须顶对齐：锚定重绘把尾行底对齐会先造出一条空白
+// 带，下一帧的增量 diff 按「帧行 y = 屏幕行 y」把上方内容画回去，尾行便悬在
+// 视口底部（底部大段空白，只有全量重置才恢复）。
+    ["verify-inline-shrink-to-fit", ['node', '--import', 'tsx/esm', 'scripts/verify-inline-shrink-to-fit.tsx']],
 // unseen-count 上报契约回归：同值重复上报会在密集流式 commit 下把
 // setState 派发进 commit 内，嵌套更新计数连涨越过 React #185 上限
 // （#146 之后残留的活链）。只在计数变化时才允许上报。
@@ -359,6 +363,17 @@ const GROUPS = {
 // btw 线程逻辑：最近 4 轮窗口与字符预算按整轮裁剪、单问 prompt 不变、线程生命周期
 // （忙碌/中止/新话题/多会话隔离/未读计数），线程只经 sideQuery 发请求。
     ["verify-btw-thread", ['node', '--import', 'tsx/esm', 'scripts/verify-btw-thread.mjs']],
+// 窄宽度底栏锚定回归（#1919）：fullscreen 下 StatusLine 字段行必须恒为一行。
+// 修复前布局引擎在 Yoga 用 <1 格的分数宽度探测文本时，会把「按分数宽度换行」
+// 的行高当节点高度（3 列宽的字在 0.82 列下量成 4 行），状态栏行被撑高 4–23
+// 行、转录被压扁、输入框停在终端中部。扫 38–100 列（含 46–58/62/64/74 这些
+// 离散触发带）断言 hint 紧随字段行、整块贴底、hint 下方无内容。
+    ["verify-narrow-footer-anchor", ['node', '--import', 'tsx/esm', 'scripts/verify-narrow-footer-anchor.tsx']],
+// inline 帧贴底回归（#1919）：主屏短帧在 resize（变高/变窄）与 >5s 空闲首键
+// 重锚定后，全量重绘必须把帧尾锚回视口底部。修复前清屏后从视口顶画帧尾，
+// 短帧之后不再发 LF，于是永久停在中上部。断言 hint 与字段行相邻、落在底部
+// 三行内，且无关帧不移动底栏。
+    ["verify-inline-frame-anchor", ['node', '--import', 'tsx/esm', 'scripts/verify-inline-frame-anchor.tsx']],
   ],
   'input-terminal': [
     ['verify-cli', ['node', '--test', 'cli/test/cli.test.mjs', 'cli/test/edges.test.mjs', 'cli/test/package.test.mjs', 'cli/test/boundary.test.mjs']],
@@ -874,6 +889,11 @@ const GROUPS = {
 // 插件底栏字段（接缝十一的 setField）：准入/归属/上限/ledger + 三槽渲染、
 // 零足迹、设置开关、minColumns、宽度阶梯、hover 详情与点击错误隔离。
     ["verify-status-fields", ['node', '--import', 'tsx/esm', 'scripts/verify-status-fields.tsx']],
+// 窄宽度页脚不得被撑高（#1883）：截断文本被 flex 挤到分数宽度（0 < width < 1）
+// 时，测量返回的是未截断文本按该宽度换行的行数（`~` 在 0.16 列报 7 行），
+// 字段行因此标 7 行、画 1 行，白留 6 行——60..130 列逐宽度断言页脚恒 3 行且提示
+// 行紧贴字段行。
+    ["verify-status-footer-narrow", ['node', '--import', 'tsx/esm', 'scripts/verify-status-footer-narrow.tsx']],
 // 底栏字段名单（statusBar.pluginFieldsOrder）：`*`/空串/三组的语法、canonical
 // 归一化、组即槽的渲染覆写，以及 key 语法/槽名与 status.ts 不漂移。
     ["verify-plugin-field-order", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-field-order.ts']],
@@ -1005,9 +1025,10 @@ const GROUPS = {
 // 非 DSH 会话上的 channel：能力快照、只提供后端支持的命令、DSH 专属动作明确不可用、
 // /new 经后端 open、换会话后的代际栅栏；DSH channel 的命令表不变。
     ["verify-backend-channel", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-channel.ts']],
-// 任务完成通知：共享 channel 的完成/队列/目标/换会话栅栏，回复摘要、标题、焦点与 OSC 9/99/777/BEL/tmux。
+// 通知：共享 channel 的完成/队列/目标/换会话栅栏，回复摘要、标题、焦点与 OSC 9/99/777/BEL/tmux；
+// 等待授权/等待提问/计划评审的标题/正文归一化、计划评审不让位、按会话与仍未挂起的投递复检。
     ['verify-task-notifications', ['node', '--import', 'tsx/esm', 'scripts/verify-task-notifications.ts']],
-// Windows toast 端到端（AC-1/5/6/7/8）：任务完成 → 解析为 windows → 去重判定 → XML 转义 →
+// Windows toast 端到端（AC-1/5/6/7/8）：通知（完成 / 等待授权 / 等待回答 / 计划评审）→ 解析为 windows → 去重判定 → XML 转义 →
 // 要 spawn 的命令行形态 → AUMID 被拒降级为 BEL；非 win32 零副作用。注册表/子进程/端口全是注入桩。
     ['verify-task-notifications-windows', ['node', '--import', 'tsx/esm', 'scripts/verify-task-notifications-windows.ts']],
 // Windows toast transport 契约：XML 转义纯函数、AUMID 注册状态机（只注册一次、被拒不重试）、

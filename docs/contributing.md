@@ -345,6 +345,8 @@ CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 | --- | --- |
 | 通用无头屏幕组装 | `pnpm smoke` |
 | 底栏字段 / 状态接缝（`tuiStatus.setField`、StatusLine 三槽与 hover/click） | `node --import tsx/esm scripts/verify-status-fields.tsx` |
+| 底栏在窄宽度下的行高（截断文本被挤到分数宽度时的测量高度） | `node --import tsx/esm scripts/verify-status-footer-narrow.tsx`（60..130 列逐宽度断言页脚恒 3 行） |
+| 底栏/输入框在窄宽度与 resize 后的锚定（#1919：fullscreen 状态栏行高、inline 短帧贴底） | `node --import tsx/esm scripts/verify-narrow-footer-anchor.tsx`、`node --import tsx/esm scripts/verify-inline-frame-anchor.tsx` |
 | 底栏字段名单（`statusBar.pluginFieldsOrder` 语法/归一化/渲染、设置页三槽勾选与预填） | `node --import tsx/esm scripts/verify-plugin-field-order.ts`、`node --import tsx/esm scripts/verify-plugin-field-picker.tsx` |
 | 跨代理会话迁移（src/migrate、adapter 解析或事件合成） | `node --import tsx/esm scripts/verify-migrate.mjs` |
 | 共享投影器、DSH 翻译器 | `pnpm verify:projection-golden`、`node --import tsx/esm scripts/verify-dsh-translate.ts`、`pnpm verify:agent-domain` |
@@ -361,6 +363,7 @@ CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 | 压缩 × 会话切换生命周期（取消先于 fork 快照、persistence 分类提示） | `node --import tsx/esm scripts/verify-compact-switch.tsx` |
 | 主题加载、持久化与运行时插件接缝 | `node --import tsx/esm scripts/verify-themes.mjs`、`node --import tsx/esm scripts/verify-runtime-themes.ts` |
 | 默认推理强度等偏好链（effortPrefs / settings 默认值） | `node --import tsx/esm scripts/verify-effort-default.ts` |
+| 收缩到装得下视口时的帧对齐（锚定重绘的空白带） | `node --import tsx/esm scripts/verify-inline-shrink-to-fit.tsx` |
 | 滚动/粘底行为 | `node scripts/verify-scroll.mjs`、`node scripts/verify-resticky.mjs`、`node --import tsx/esm scripts/verify-post-shrink-anchor.tsx`、`node --import tsx/esm scripts/verify-scroll-fold-anchor.tsx`、`node --import tsx/esm scripts/verify-scroll-fold-anchor-mounted.tsx`、`node --import tsx/esm scripts/verify-scroll-anchor-invalidation.tsx`、`node --import tsx/esm scripts/verify-scroll-anchor-remeasurement.tsx`（同时覆盖 `DSH_TEST_COLUMNS=60`）及对应 `repro-*` 环境 |
 | 计划评审长正文（`exit_plan_mode` 窗口化 + 滚轮） | `node --import tsx/esm scripts/verify-plan-review-scroll.tsx` |
 | 全屏复制即选区 | `node scripts/verify-copy-on-select.mjs` |
