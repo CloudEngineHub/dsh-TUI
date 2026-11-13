@@ -538,9 +538,10 @@ export function Chat({
    */
   onPluginManage?: (args: string, sink: PluginManageSink) => PluginManageFlow | undefined
   /**
-   * `/team [status]`, wired to `createTeamCommandEntry`: a report, or the
-   * enable/migration hint when the team service is not mounted. `undefined`
-   * on a backend without it.
+   * `/team [status|on|off]`, wired to `createTeamCommandEntry`: on a selection
+   * host it writes the saved per-root switch; on a bundle host it reports and
+   * points at `/plugin enable|disable`, or at the enable route when the team
+   * service is not mounted. `undefined` on a backend without it.
    */
   onTeamCommand?: (args: string, sink: TeamCommandSink) => Promise<readonly string[]>
   /** 启动参数（Config 行 / DSH_TUI_BACKEND）压过了记忆：选择器明说。 */
@@ -2513,8 +2514,8 @@ export function Chat({
 
   const terminalFocused = useTerminalFocus()
   // Gate the stream this app renders to; embedders may replace process.stdout.
-  const { stdout: appStdout } = useApp()
-  const programStatusEnabled = React.useMemo(() => supportsProgramStatus(appStdout.isTTY === true), [appStdout])
+  const { stdout } = useApp()
+  const programStatusEnabled = React.useMemo(() => supportsProgramStatus(stdout.isTTY === true), [stdout])
   // Mouse text selection auto-copy: active only in
   // fullscreen (<AlternateScreen> supplies mouse tracking); a no-op
   // subscription in inline mode, where selection belongs to the terminal.
@@ -3972,7 +3973,8 @@ export function Chat({
         return true
       }
       case 'team': {
-        // `/team` 只报告团队状态（team-mode.ts）；开关是 /plugin enable|disable。
+        // `/team`（team-mode.ts）：0.2.2-rc.2 选择宿主执行 on|off 写会话级开关；
+        // 旧 bundle 宿主只报告并指向 /plugin enable|disable。
         // 服务未挂载时这一行不在命令表里，但手敲仍会走到这里，拿回开启提示。
         setHelpOpen(false)
         if (onTeamCommand === undefined) {
@@ -4886,11 +4888,38 @@ export function Chat({
     && !supervisorOpen && !treeOpen && !settingsOpen && !jobsPanelOpen
     && !sceneOpen && !subagentDashboardOpen && subagentDetailId === null
     && !btwSceneOpen
+  const couponRootRef = React.useRef<DOMElement | null>(null)
+  const couponGeometryRef = React.useRef<{ visible: boolean; height: number; columns: number; rows: number } | null>(null)
+  React.useLayoutEffect(() => {
+    const columns = stdout.columns
+    const rows = stdout.rows
+    const previous = couponGeometryRef.current
+    // No card: skip the per-commit yoga measurement. Physical size is still
+    // recorded so a card that appears together with a resize is not
+    // reanchored on top of the resize repaint the renderer already did.
+    if (!couponVisible) {
+      couponGeometryRef.current = { visible: false, height: 0, columns, rows }
+      return
+    }
+    const height = couponRootRef.current?.yogaNode?.getComputedHeight()
+    couponGeometryRef.current = height === undefined ? null : { visible: couponVisible, height, columns, rows }
+    // Inline shrink preserves transcript scrollback, so its document bottom can
+    // move above the viewport bottom. Reanchor the modal after its new geometry
+    // commits, including an idle-layout shrink while the same card stays open.
+    // Requesting this before the commit lets a pending old frame consume it.
+    // Terminal viewport changes already get a resize repaint in the renderer.
+    if (couponVisible && height !== undefined
+      && (previous === null
+        || (previous.columns === columns && previous.rows === rows
+          && (!previous.visible || height < previous.height)))) {
+      instances.get(stdout)?.reanchorViewport()
+    }
+  })
   const markCouponShown = React.useCallback((orderId: Parameters<WhaleCouponStore['shown']>[0]) => {
-    bonusNotices?.shown(orderId)
-  }, [bonusNotices])
+    if (coupon !== null) bonusNotices?.shown(orderId, coupon)
+  }, [bonusNotices, coupon])
   const closeCoupon = React.useCallback(() => {
-    if (coupon !== null) bonusNotices?.dismiss(coupon.orderId)
+    if (coupon !== null) bonusNotices?.dismiss(coupon.orderId, coupon)
   }, [bonusNotices, coupon])
 
   /**
@@ -6761,7 +6790,7 @@ export function Chat({
     const messageControl = channel.subagentControl?.message
     const loadTranscript = channel.subagentControl?.history
     const viewMessages = messageControl === undefined ? [] : messageControl.messages().filter(m => m.from === agentView.agentId || m.to === agentView.agentId)
-    const viewTarget = agentComposeTargetOf(agentView.agentId, new Map(channel.subagents.map(s => [s.agentId, s.description])))
+    const viewTarget = agentComposeTargetOf(agentView.agentId, new Map(channel.subagents.map(s => [s.agentId, s.name !== undefined && s.name !== '' ? s.name : s.description])))
     const viewScene = (
       <AgentTranscriptScene
         subagent={viewSubagent}
@@ -6792,7 +6821,7 @@ export function Chat({
     }
     const detailControl = channel.subagentControl?.message
     const detailMessages = detailControl === undefined ? [] : detailControl.messages().filter(m => m.from === subagent.agentId || m.to === subagent.agentId)
-    const detailTarget = agentComposeTargetOf(subagent.agentId, new Map(channel.subagents.map(s => [s.agentId, s.description])))
+    const detailTarget = agentComposeTargetOf(subagent.agentId, new Map(channel.subagents.map(s => [s.agentId, s.name !== undefined && s.name !== '' ? s.name : s.description])))
     const scene = (
       <SubagentDetailScene
         subagent={subagent}
@@ -7144,7 +7173,7 @@ export function Chat({
     : null
 
   return withTitle(
-    <Box flexDirection="column" flexGrow={1} width="100%">
+    <Box ref={couponRootRef} flexDirection="column" flexGrow={1} width="100%">
       {/* 分栏布局：geometry 为 null（收起 / 窄屏 / inline / 编辑器展开）
           时 SidePanelLayout 原样渲染 children，与现状逐字节一致；分栏时
           左栏拿到 chatColumns 的 TerminalSizeContext 覆盖与出血边界。 */}

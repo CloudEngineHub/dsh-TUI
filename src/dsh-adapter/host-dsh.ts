@@ -37,6 +37,8 @@ type AppBootModule = Pick<typeof AppBoot, ContractExports<'appBoot'>>
 /** `@deepseek-ai/dsh/profile-boot`, declared locally: the host CLI is not a dependency. */
 interface ProfileBootModule {
   prepareProfile(name: string, userLayer?: boolean, fromDefaultProfile?: string): AppBoot.Profile
+  /** Added in 0.2.2-rc.2; older hosts keep their existing attribution. */
+  userAgentProfile?(name: string): string
   readonly INSTALL_ANCHOR: string
   readonly PROFILE_ROOT_FILENAME: 'cordis.yml'
 }
@@ -359,6 +361,9 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     // uses the same final answer for its slot and for this composition mode.
     try {
       if (dsh) {
+        if (typeof profileBoot.userAgentProfile === 'function') {
+          process.env.DSH_USER_AGENT_SUFFIX = `dsh-profile/${profileBoot.userAgentProfile(options.profile)}`
+        }
         const disposeProxy = await host.httpProxy.installProxyFromEnvironment(environment, message => { process.stderr.write(`${BIN_NAME}: ${message}\n`) })
         if (disposeProxy !== undefined) ctx.effect(() => () => { void Promise.resolve(disposeProxy()).catch(() => undefined) }, 'dsh-tui host proxy')
         // 5. runProfile: fail-loud (removable here, unlike runProfile's).
